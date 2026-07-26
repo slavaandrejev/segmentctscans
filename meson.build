@@ -28,15 +28,4 @@ omp_dep     = dependency('openmp')
 opencv_dep  = dependency('OpenCV', method: 'cmake')
 range_dep   = dependency('range-v3', method: 'cmake')
 
-executable(
-    'totalvarmin'
-  , 'totalvarmin.cpp'
-  , dependencies: [
-        boost_dep
-      , fmt_dep
-      , libtiff_dep
-      , mdspan_dep
-      , omp_dep
-      , opencv_dep
-      , range_dep
-      ])
+subdir('totalvarmin2d')
