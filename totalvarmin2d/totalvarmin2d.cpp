@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
     fmt::print("bps = {}\n", bps);
     fmt::print("spp = {}\n", spp);
 
-    auto stride = ((w + 3) / 4) * 8;
+    auto stride = ((w + 3) / 4) * 4;
     fmt::print("stride = {}\n", stride);
 
     auto data = std::vector<uint16_t>(stride * h);
