@@ -3,7 +3,7 @@ project(
   , ['c', 'cpp']
   , version : '0.1'
   , default_options: {
-        'cpp_std': 'gnu++23'
+        'cpp_std': 'gnu++26'
       , 'c_std':   'gnu18'
       }
   )
@@ -20,12 +20,19 @@ add_project_arguments(
   , language: ['cpp']
   )
 
-boost_dep  = dependency('boost', modules: ['atomic', 'filesystem', 'headers', 'iostreams', 'program_options', 'random', 'regex'])
-fmt_dep     = dependency('fmt')
-libtiff_dep = dependency('libtiff-4')
-mdspan_dep  = dependency('mdspan', method: 'cmake')
-omp_dep     = dependency('openmp')
-opencv_dep  = dependency('OpenCV', method: 'cmake')
-range_dep   = dependency('range-v3', method: 'cmake')
+compiler = meson.get_compiler('cpp')
+if compiler.get_id().contains('clang')
+    add_project_arguments('-Wno-mathematical-notation-identifier-extension', language: 'cpp')
+endif
+
+boost_dep    = dependency('boost', modules: ['atomic', 'filesystem', 'headers', 'iostreams', 'program_options', 'random', 'regex'])
+clarabel_dep = dependency('Clarabel', method: 'cmake', modules: ['Clarabel::shared'])
+fmt_dep      = dependency('fmt')
+libtiff_dep  = dependency('libtiff-4')
+mdspan_dep   = dependency('mdspan', method: 'cmake')
+omp_dep      = dependency('openmp')
+opencv_dep   = dependency('OpenCV', method: 'cmake')
+range_dep    = dependency('range-v3', method: 'cmake')
 
 subdir('totalvarmin2d')
+subdir('totalvarmin')
