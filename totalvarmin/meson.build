@@ -15,7 +15,6 @@ executable(
   , link_whole: [field_io_lib]
   , dependencies: [
         boost_dep
-      , clarabel_dep
       , fmt_dep
       , libtiff_dep
       , mdspan_dep
