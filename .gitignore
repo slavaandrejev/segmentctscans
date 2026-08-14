@@ -1,0 +1,15 @@
+*-log.txt
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.xdv
+*.toc
+charts.pdf
+charts.tex

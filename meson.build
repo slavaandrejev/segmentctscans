@@ -25,7 +25,9 @@ if compiler.get_id().contains('clang')
     add_project_arguments('-Wno-mathematical-notation-identifier-extension', language: 'cpp')
 endif
 
-boost_dep    = dependency('boost', modules: ['atomic', 'filesystem', 'headers', 'iostreams', 'program_options', 'random', 'regex'])
+project_inc = include_directories('include')
+
+boost_dep    = dependency('boost', modules: ['headers', 'archive', 'serialization', 'program_options', 'iostreams'])
 clarabel_dep = dependency('Clarabel', method: 'cmake', modules: ['Clarabel::shared'])
 fmt_dep      = dependency('fmt')
 libtiff_dep  = dependency('libtiff-4')
@@ -36,3 +38,4 @@ range_dep    = dependency('range-v3', method: 'cmake')
 
 subdir('totalvarmin2d')
 subdir('totalvarmin')
+subdir('transpose')
