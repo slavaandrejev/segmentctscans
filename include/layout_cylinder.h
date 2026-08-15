@@ -23,11 +23,14 @@ struct layout_cylinder {
     template <class Extents>
     class mapping {
         friend class boost::serialization::access;
+        friend constexpr bool
+        operator==(const mapping&, const mapping&) = default;
     public:
         using extents_type = Extents;
         using index_type   = typename Extents::index_type;
         using size_type    = typename Extents::size_type;
         using layout_type  = layout_cylinder;
+        using rank_type    = typename Extents::rank_type;
 
         mapping() = default;
 
