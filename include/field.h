@@ -39,54 +39,28 @@ public:
     Field(uint32_t num_images, uint32_t width, uint32_t height, double xc, double yc, double r) {
         static auto constexpr align = uint32_t(byte_alignment / sizeof(value_type));
         const auto stride = uint32_t(((num_images + (align - 1)) / align) * align);
-        auto mapping = layout_cylinder::mapping{extents_type{num_images, height, width}, xc, yc, r, stride};
+        mapping_storage = layout_cylinder::mapping_storage{
+            extents_type{num_images, height, width}
+          , xc
+          , yc
+          , r
+          , stride
+          };
 
-        storage.resize(mapping.required_span_size());
-        view = std::mdspan{storage.data(), std::move(mapping)};
+        storage.resize(mapping_storage.required_span_size());
     }
 
     explicit Field(const layout_cylinder::mapping<extents_type> &m)
       : storage(m.required_span_size())
-      , view{storage.data(), m}
+      , mapping_storage(m)
     {}
 
-    Field(const Field &other)
-      : storage(other.storage)
-      , view{storage.data(), other.view.mapping()}
-    {}
+    auto view() { return std::mdspan{storage.data(), mapping_storage.mapping()}; }
+    auto view() const { return std::mdspan{storage.data(), mapping_storage.mapping()}; }
 
-    Field & operator=(const Field &other) {
-        storage = other.storage;
-        view    = mdspan_type{storage.data(), other.view.mapping()};
-        return *this;
-    }
-
-    Field(Field &&) noexcept = default;
-    Field & operator=(Field &&) noexcept = default;
-
-    auto const & mapping() const { return view.mapping(); }
-
-    constexpr reference operator[](index_type n, index_type row, index_type col) const {
-        return view[n, row, col];
-    }
-
-    constexpr reference operator[](index_type n, index_type row, index_type col) {
-        return view[n, row, col];
-    }
-
-    auto row_begin(index_type col) const { return view.mapping().row_begin(col); }
-    auto row_end(index_type col) const { return view.mapping().row_end(col); }
-
-    auto col_begin() const { return view.mapping().col_begin(); }
-    auto col_end()   const { return view.mapping().col_end(); }
-
-    auto n_images() const { return view.mapping().n_images(); }
-
-    auto nstride() const { return view.mapping().nstride(); }
-
-     void swap(Field &other) noexcept {
+    void swap(Field &other) noexcept {
         storage.swap(other.storage);
-        std::swap(view, other.view);
+        std::swap(mapping_storage, other.mapping_storage);
     }
 
 private:
@@ -94,20 +68,22 @@ private:
     using allocator = boost::alignment::aligned_allocator<value_type, byte_alignment>;
 
     std::vector<value_type, allocator> storage;
-    mdspan_type view;
+    layout_cylinder::mapping_storage<extents_type> mapping_storage;
 
     template <typename Archive>
     void save(Archive &ar, const unsigned int) const {
         static_assert(std::is_integral_v<value_type>);
         using namespace io;
 
-        ar << view.mapping();
-        for (auto col = col_begin(); col_end() > col; ++col) {
-            for (auto row = row_begin(col); row_end(col) > row; ++row) {
-                for (auto n = uint32_t{}; n_images() > n; ++n) {
+        ar << mapping_storage;
+        auto span = view();
+        auto m    = span.mapping();
+        for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+            for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
+                for (auto n = uint32_t{}; m.n_images() > n; ++n) {
                     using unsigned_value_type = std::make_unsigned_t<value_type>;
                     auto static constexpr nbits = sizeof(value_type) * 8;
-                    ar << u<nbits>(unsigned_value_type((*this)[n, row, col]));
+                    ar << u<nbits>(unsigned_value_type(span[n, row, col]));
                 }
             }
         }
@@ -118,17 +94,17 @@ private:
         static_assert(std::is_integral_v<value_type>);
         using namespace io;
 
-        auto mapping = layout_cylinder::mapping<extents_type>{};
-        ar >> mapping;
-        storage.resize(mapping.required_span_size());
-        view = mdspan_type{storage.data(), mapping};
-        for (auto col = col_begin(); col_end() > col; ++col) {
-            for (auto row = row_begin(col); row_end(col) > row; ++row) {
-                for (auto n = uint32_t{}; n_images() > n; ++n) {
+        ar >> mapping_storage;
+        storage.resize(mapping_storage.required_span_size());
+        auto span = view();
+        auto m    = span.mapping();
+        for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+            for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
+                for (auto n = uint32_t{}; m.n_images() > n; ++n) {
                     auto static constexpr nbits = sizeof(value_type) * 8;
                     auto v = u<nbits>{};
                     ar >> v;
-                    (*this)[n, row, col] = value_type(v);
+                    span[n, row, col] = value_type(v);
                 }
             }
         }

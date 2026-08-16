@@ -13,9 +13,9 @@
 
 #include <sqr.h>
 
-template <std::floating_point ElementType>
+template <std::floating_point ElementType, typename Extents>
 auto calc_hist(
-    const Field<ElementType> &a
+    std::mdspan<ElementType, Extents, layout_cylinder> a
   , double 𝛿
   , uint16_t nbins)
 {
@@ -27,6 +27,7 @@ auto calc_hist(
 
     auto rd = std::random_device{};
 
+    auto m = a.mapping();
     auto hist = std::vector<uint64_t>(nbins, 0);
     auto hist_p = &hist[0];
     #pragma omp parallel
@@ -34,9 +35,9 @@ auto calc_hist(
         auto gen  = std::mt19937(rd());
         auto dist = std::uniform_real_distribution{-𝛿 / 2, 𝛿 / 2};
         #pragma omp for reduction(+:hist_p[:nbins])
-        for (auto col = a.col_begin(); a.col_end() > col; ++col) {
-            for (auto row = a.row_begin(col); a.row_end(col) > row; ++row) {
-                for (auto n = uint32_t{}; a.n_images() > n; ++n) {
+        for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+            for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
+                for (auto n = uint32_t{}; m.n_images() > n; ++n) {
                     auto v = a[n, row, col];
                     v += dist(gen);
                     auto bin = int32_t(std::round(nbins * v - value_type(0.5)));

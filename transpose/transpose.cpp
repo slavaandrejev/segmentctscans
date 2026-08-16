@@ -141,11 +141,13 @@ int main(int argc, char *argv[]) {
                 TIFFReadScanline(tif.get(), &batch[k, row, 0], row);
             }
         }
+        auto v = original_img.view();
+        auto m = v.mapping();
         #pragma omp parallel for schedule(static, 1)
-        for (auto col = original_img.col_begin(); original_img.col_end() > col; ++col) {
-            for (auto row = original_img.row_begin(col); original_img.row_end(col) > row; ++row) {
+        for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+            for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
                 for (auto k = uint32_t{}; nb > k; ++k) {
-                    original_img[n0 + k, row, col] = batch[k, row, col];
+                    v[n0 + k, row, col] = batch[k, row, col];
                 }
             }
         }

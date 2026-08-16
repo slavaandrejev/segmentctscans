@@ -20,24 +20,86 @@
 #include <sqr.h>
 
 struct layout_cylinder {
+    template <typename Index>
+    struct mapping_tables {
+        const Index *start_row_{};
+        const Index *base_{};
+    };
+
     template <class Extents>
-    class mapping {
-        friend class boost::serialization::access;
+    struct mapping {
+        using extents_type = Extents;
+        using index_type   = typename Extents::index_type;
+        using size_type    = typename Extents::size_type;
+        using rank_type    = typename Extents::rank_type;
+        using layout_type  = layout_cylinder;
+
+        Extents ext_{};
+
+        index_type nstride_{};
+        index_type col_begin_{};
+        index_type col_end_{};
+        index_type span_size_{};
+
+        mapping_tables<index_type> csc{};
+
+        constexpr auto operator()(index_type n, index_type row, index_type col) const -> index_type
+        {
+            return csc.base_[col] + (row - csc.start_row_[col]) * nstride_ + n;
+        }
+
+        constexpr auto required_span_size() const -> index_type { return span_size_; }
+
+        constexpr auto extents() const -> const Extents & { return ext_; }
+
+        constexpr auto row_begin(index_type col) const { return csc.start_row_[col]; }
+        constexpr auto row_end(index_type col) const {
+            return csc.start_row_[col] + (csc.base_[col + 1] - csc.base_[col]) / nstride_;
+        }
+
+        constexpr auto col_begin() const { return col_begin_; }
+        constexpr auto col_end() const { return col_end_; }
+
+        constexpr auto n_images() const { return ext_.extent(0); }
+
+        constexpr auto nstride() const { return nstride_; }
+
+        static constexpr bool is_always_unique()     { return true; }
+        static constexpr bool is_always_exhaustive() { return false; }
+        static constexpr bool is_always_strided()    { return false; }
+        static constexpr bool is_unique()            { return true; }
+               constexpr bool is_exhaustive() const  { return ext_.extent(0) == nstride_; }
+        static constexpr bool is_strided()           { return false; }
+
         friend constexpr bool
-        operator==(const mapping&, const mapping&) = default;
+        operator==(const mapping &, const mapping &) = default;
+    };
+
+    // This class owns the mapping data
+    template <class Extents>
+    class mapping_storage {
+        friend class boost::serialization::access;
     public:
         using extents_type = Extents;
         using index_type   = typename Extents::index_type;
         using size_type    = typename Extents::size_type;
         using layout_type  = layout_cylinder;
-        using rank_type    = typename Extents::rank_type;
 
-        mapping() = default;
+        mapping_storage() = default;
+
+        mapping_storage(const layout_type::mapping<extents_type> &other)
+          : ext_{other.ext_}
+          , nstride_{other.nstride_}
+          , col_begin_{other.col_begin_}
+          , col_end_{other.col_end_}
+          , start_row_(other.csc.start_row_, other.csc.start_row_ + ext_.extent(2))
+          , base_(other.csc.base_, other.csc.base_ + ext_.extent(2) + 1)
+        {}
 
         // Extents are: number of images, rows and columns in the original TIFF
-        mapping(const Extents &e, double xc, double yc, double r, index_type nstride)
+        mapping_storage(const Extents &e, double xc, double yc, double r, index_type nstride)
           : ext_{e}
-          , nstride_(nstride)
+          , nstride_{nstride}
           , start_row_(e.extent(2))
           , base_(e.extent(2) + 1)
         {
@@ -76,40 +138,31 @@ struct layout_cylinder {
             base_[e.extent(2)] = off; // total size
         }
 
-        // logical indices unchanged: (n, row, col); n is the contiguous axis
-        auto operator()(index_type n, index_type row, index_type col) const -> index_type
-        {
-            return base_[col] + (row - start_row_[col]) * nstride_ + n;
+        auto mapping(mapping_tables<index_type> csc) const {
+            return layout_type::mapping<extents_type>{
+                .ext_       = ext_
+              , .nstride_   = nstride_
+              , .col_begin_ = col_begin_
+              , .col_end_   = col_end_
+              , .span_size_ = required_span_size()
+              , .csc        = csc
+              };
+        }
+
+        auto mapping() const {
+            return mapping(mapping_tables<index_type>{
+                .start_row_ = start_row_.data()
+              , .base_      = base_.data()
+              });
         }
 
         auto required_span_size() const -> index_type { return base_.back(); }
 
-        auto extents() const -> Extents const& { return ext_; }
-
-        static constexpr auto is_always_unique()     -> bool { return true; }
-        static constexpr auto is_always_exhaustive() -> bool { return false; }
-        static constexpr auto is_always_strided()    -> bool { return false; }
-        static constexpr auto is_unique()            -> bool { return true; }
-               constexpr auto is_exhaustive() const  -> bool { return ext_.extent(0) == nstride_; }
-        static constexpr auto is_strided()           -> bool { return false; }
-
-        auto row_begin(index_type col) const { return start_row_[col]; }
-        auto row_end(index_type col) const { // one past last valid row
-            return start_row_[col]
-                 + (base_[col + 1] - base_[col]) / nstride_;
-        }
-        auto col_begin() const { return col_begin_; }
-        auto col_end()   const { return col_end_; } // one past last
-
-        auto n_images() const { return ext_.extent(0); }
-
-        auto nstride() const { return nstride_; }
-
-    private:
-        Extents ext_{};
-        index_type nstride_{};
-        index_type col_begin_{~index_type{}};
-        index_type col_end_{};
+private:
+        extents_type ext_{};
+        index_type   nstride_{};
+        index_type   col_begin_{~index_type{}};
+        index_type   col_end_{};
         std::vector<index_type> start_row_{};
         std::vector<index_type> base_{}; // per-col base offset; last = total
 
@@ -202,14 +255,14 @@ struct layout_cylinder {
 namespace boost {
     namespace serialization {
         template <typename Extents>
-        struct implementation_level<layout_cylinder::mapping<Extents>> {
+        struct implementation_level<layout_cylinder::mapping_storage<Extents>> {
             typedef mpl::integral_c_tag tag;
             typedef mpl::int_<object_serializable> type;
             BOOST_STATIC_CONSTANT(int, value = implementation_level::type::value);
         };
 
         template <typename Extents>
-        struct tracking_level<layout_cylinder::mapping<Extents>> {
+        struct tracking_level<layout_cylinder::mapping_storage<Extents>> {
             typedef mpl::integral_c_tag tag;
             typedef mpl::int_<track_never> type;
             BOOST_STATIC_CONSTANT(int, value = tracking_level::type::value);

@@ -28,13 +28,15 @@ namespace bc = boost::math::double_constants;
 
 extern template void Field<uint16_t>::load(io::BinIArchive<const char*>&, unsigned);
 
-void write_png(const Field<float> &img, uint32_t col, float 𝜆) {
+template <typename ElementType, typename Extents>
+void write_png(std::mdspan<ElementType, Extents, layout_cylinder> img, uint32_t col, float 𝜆) {
+    auto m = img.mapping();
     auto slice = cv::Mat(
-        img.row_end(col) - img.row_begin(col)
-      , img.n_images()
+        m.row_end(col) - m.row_begin(col)
+      , m.n_images()
       , CV_32FC1
-      , &img[0, img.row_begin(col), col]
-      , img.nstride() * 4
+      , &img[0, m.row_begin(col), col]
+      , m.nstride() * 4
       );
     auto gamma_corrected = cv::Mat{};
     cv::pow(slice, 1.0 / 2.2, gamma_corrected);
@@ -52,20 +54,20 @@ int main(int argc, char *argv[]) {
     auto original_img = Field<uint16_t>{};
     ia >> original_img;
 
-    auto [lo, hi] = find_intensity_range(original_img, 0.001);
+    auto [lo, hi] = find_intensity_range(original_img.view(), 0.001);
     fmt::print("used lo = {}\n", lo);
     fmt::print("used hi = {}\n", hi);
 
     static auto constexpr col = 481;
     static auto constexpr 𝜆   = 0.04f;
 
-    auto img = convert_to_fp(original_img, lo, hi);
-    write_png(img, col, 0.0f);
+    auto img = convert_to_fp(original_img.view(), lo, hi);
+    write_png(img.view(), col, 0.0f);
 
     Field<uint16_t>{}.swap(original_img); // free memory
 
     const auto nbins = 500;
-    auto hist = calc_hist(img, 1.0 / (hi - lo), nbins);
+    auto hist = calc_hist(img.view(), 1.0 / (hi - lo), nbins);
     auto f = std::unique_ptr<FILE, decltype(&fclose)>{
         fopen("original-hist.txt", "wt")
       , &fclose
@@ -75,9 +77,9 @@ int main(int argc, char *argv[]) {
         fmt::print(f.get(), "{} {}\n", (i + 0.5) / nbins, hist[i]);
     }
 
-    chambolle(img, 𝜆, 1.0f / 6.0f * 0.99f, 150);
+    chambolle(img.view(), 𝜆, 1.0f / 6.0f * 0.99f, 150);
 
-    hist = calc_hist(img, 1.0 / (hi - lo), nbins);
+    hist = calc_hist(img.view(), 1.0 / (hi - lo), nbins);
     f = std::unique_ptr<FILE, decltype(&fclose)>{
         fopen(fmt::format("hist (𝜆 = {:.3f}).txt", 𝜆).c_str(), "wt")
       , &fclose
@@ -87,5 +89,5 @@ int main(int argc, char *argv[]) {
         fmt::print(f.get(), "{} {}\n", (i + 0.5) / nbins, hist[i]);
     }
 
-    write_png(img, col, 𝜆);
+    write_png(img.view(), col, 𝜆);
 }

@@ -12,9 +12,9 @@
 
 #include <sqr.h>
 
-template <std::integral ElementType>
+template <std::integral ElementType, typename Extents>
 auto find_intensity_range(
-    const Field<ElementType> &a
+    std::mdspan<ElementType, Extents, layout_cylinder> a
   , double tail_thr)
 {
     namespace rs = ranges;
@@ -26,12 +26,13 @@ auto find_intensity_range(
     auto constexpr maxv      = std::numeric_limits<value_type>::max();
     auto constexpr hist_size = maxv - minv + 1;
 
+    auto m = a.mapping();
     auto hist = std::vector<uint64_t>(hist_size, 0);
     auto hist_p = &hist[0];
     #pragma omp parallel for reduction(+:hist_p[:hist_size]) schedule(static, 1)
-    for (auto col = a.col_begin(); a.col_end() > col; ++col) {
-        for (auto row = a.row_begin(col); a.row_end(col) > row; ++row) {
-            for (auto n = uint32_t{}; a.n_images() > n; ++n) {
+    for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+        for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
+            for (auto n = uint32_t{}; m.n_images() > n; ++n) {
                 auto v = a[n, row, col];
                 ++hist_p[v - minv];
             }
