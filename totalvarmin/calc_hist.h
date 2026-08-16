@@ -7,6 +7,12 @@
 #include <tuple>
 #include <vector>
 
+#if defined(__cpp_lib_mdspan)
+#include <mdspan>
+#else
+#include <mdspan/mdspan.hpp>
+#endif
+
 #include <range/v3/numeric/accumulate.hpp>
 #include <range/v3/algorithm/copy.hpp>
 #include <range/v3/view/transform.hpp>
@@ -14,7 +20,8 @@
 #include <sqr.h>
 
 template <std::floating_point ElementType, typename Extents>
-auto calc_hist(
+std::vector<double>
+calc_hist(
     std::mdspan<ElementType, Extents, layout_cylinder> a
   , double 𝛿
   , uint16_t nbins)
@@ -22,8 +29,8 @@ auto calc_hist(
     namespace rs = ranges;
     namespace rv = rs::views;
 
-    using field      = Field<ElementType>;
-    using value_type = field::value_type;
+    using mdspan     = std::mdspan<ElementType, Extents, layout_cylinder>;
+    using value_type = mdspan::value_type;
 
     auto rd = std::random_device{};
 

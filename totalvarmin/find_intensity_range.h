@@ -2,25 +2,36 @@
 
 #include <cmath>
 #include <concepts>
+#include <cstdint>
 #include <limits>
 #include <tuple>
 #include <vector>
 
+#if defined(__cpp_lib_mdspan)
+#include <mdspan>
+#else
+#include <mdspan/mdspan.hpp>
+#endif
+
 #include <range/v3/numeric/accumulate.hpp>
 
-#include <field.h>
+#include <layout_cylinder.h>
 
 #include <sqr.h>
 
 template <std::integral ElementType, typename Extents>
-auto find_intensity_range(
+std::tuple<
+    typename std::mdspan<ElementType, Extents, layout_cylinder>::value_type
+  , typename std::mdspan<ElementType, Extents, layout_cylinder>::value_type
+  >
+find_intensity_range(
     std::mdspan<ElementType, Extents, layout_cylinder> a
   , double tail_thr)
 {
     namespace rs = ranges;
 
-    using field      = Field<ElementType>;
-    using value_type = field::value_type;
+    using mdspan     = std::mdspan<ElementType, Extents, layout_cylinder>;
+    using value_type = mdspan::value_type;
 
     auto constexpr minv      = std::numeric_limits<value_type>::min();
     auto constexpr maxv      = std::numeric_limits<value_type>::max();

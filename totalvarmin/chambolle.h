@@ -13,12 +13,12 @@
 template <std::floating_point ElementType, typename Extents>
 void chambolle(
     std::mdspan<ElementType, Extents, layout_cylinder> g
-  , typename Field<ElementType>::value_type 𝜆
-  , typename Field<ElementType>::value_type 𝜏
+  , typename std::mdspan<ElementType, Extents, layout_cylinder>::value_type 𝜆
+  , typename std::mdspan<ElementType, Extents, layout_cylinder>::value_type 𝜏
   , int iters)
 {
-    using field      = Field<ElementType>;
-    using value_type = field::value_type;
+    using mdspan     = std::mdspan<ElementType, Extents, layout_cylinder>;
+    using value_type = mdspan::value_type;
 
     auto m = g.mapping();
 
