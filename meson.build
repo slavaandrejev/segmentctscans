@@ -2,6 +2,7 @@ project(
     'kapitza-pendulum'
   , ['c', 'cpp']
   , version : '0.1'
+  , meson_version: '>=1.2'
   , default_options: {
         'cpp_std': 'gnu++26'
       , 'c_std':   'gnu18'
