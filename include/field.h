@@ -12,11 +12,7 @@
 #include <boost/serialization/tracking.hpp>
 #include <boost/serialization/wrapper.hpp>
 
-#if defined(__cpp_lib_mdspan)
-#include <mdspan>
-#else
 #include <mdspan/mdspan.hpp>
-#endif
 
 #include <io/primitivetypes.h>
 #include <layout_cylinder.h>

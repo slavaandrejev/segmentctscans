@@ -1,10 +1,6 @@
 #pragma once
 
-#if defined(__cpp_lib_mdspan)
-#include <mdspan>
-#else
 #include <mdspan/mdspan.hpp>
-#endif
 
 #include <cmath>
 #include <vector>
@@ -14,6 +10,10 @@
 #include <boost/serialization/split_member.hpp>
 #include <boost/serialization/tracking.hpp>
 #include <boost/serialization/wrapper.hpp>
+
+#if defined(__CUDA__) || defined(__INTELLISENSE__)
+#include <cuda/buffer>
+#endif
 
 #include <io/primitivetypes.h>
 
@@ -42,6 +42,39 @@ struct layout_cylinder {
         index_type span_size_{};
 
         mapping_tables<index_type> csc{};
+
+#if defined(__CUDA__) || defined(__INTELLISENSE__)
+        template <typename Index>
+        struct device_mapping_tables {
+            cuda::device_buffer<Index> start_row;
+            cuda::device_buffer<Index> base;
+
+            auto csc() const -> mapping_tables<Index> {
+                return {
+                    .start_row_ = start_row.data()
+                  , .base_      = base.data()
+                  };
+            }
+        };
+
+        auto device_tables(cuda::stream_ref stream, cuda::device_memory_pool_ref mr) const {
+            return device_mapping_tables<index_type>{
+                .start_row = cuda::device_buffer<index_type>{stream, mr, csc.start_row_, csc.start_row_ + ext_.extent(2)}
+              , .base = cuda::device_buffer<index_type>{stream, mr, csc.base_, csc.base_ + ext_.extent(2) + 1}
+              };
+        }
+
+        auto with_tables(mapping_tables<index_type> csc) const {
+            return layout_type::mapping<extents_type>{
+                .ext_       = ext_
+              , .nstride_   = nstride_
+              , .col_begin_ = col_begin_
+              , .col_end_   = col_end_
+              , .span_size_ = required_span_size()
+              , .csc        = csc
+              };
+        }
+#endif
 
         constexpr auto operator()(index_type n, index_type row, index_type col) const -> index_type
         {

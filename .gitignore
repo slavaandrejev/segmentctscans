@@ -13,3 +13,4 @@
 *.toc
 charts.pdf
 charts.tex
+include_tree.py

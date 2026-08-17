@@ -29,7 +29,9 @@ endif
 project_inc = include_directories('include')
 
 boost_dep    = dependency('boost', modules: ['headers', 'archive', 'serialization', 'program_options', 'iostreams'])
+cccl_dep     = dependency('cccl', method: 'cmake', modules: ['CCCL::Thrust', 'CCCL::CUB', 'CCCL::libcudacxx'])
 clarabel_dep = dependency('Clarabel', method: 'cmake', modules: ['Clarabel::shared'])
+cuda_dep     = dependency('cuda')
 fmt_dep      = dependency('fmt')
 libtiff_dep  = dependency('libtiff-4')
 mdspan_dep   = dependency('mdspan', method: 'cmake')
@@ -37,6 +39,10 @@ omp_dep      = dependency('openmp')
 opencv_dep   = dependency('OpenCV', method: 'cmake')
 range_dep    = dependency('range-v3', method: 'cmake')
 
+cuda_cpp_args = ['-x', 'cuda', '--cuda-gpu-arch=sm_86', '-Wno-unknown-cuda-version', '-Wno-unsupported-target-opt']
+cuda_overr_options = {'cpp_std': 'gnu++23'}
+
 subdir('totalvarmin2d')
+subdir('cuda-context')
 subdir('totalvarmin')
 subdir('transpose')

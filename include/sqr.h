@@ -1,4 +1,4 @@
 #pragma once
 
-inline
+constexpr
 auto sqr(auto x) { return x * x; }

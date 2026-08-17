@@ -4,11 +4,7 @@
 #include <string_view>
 #include <vector>
 
-#if defined(__cpp_lib_mdspan)
-#include <mdspan>
-#else
 #include <mdspan/mdspan.hpp>
-#endif
 
 #include <fmt/printf.h>
 
