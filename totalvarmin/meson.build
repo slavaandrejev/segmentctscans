@@ -9,11 +9,26 @@ field_io_lib = static_library(
       }
   )
 
+# takes too long in debug mode, always opimize this
+calc_hist_lib = static_library(
+    'calc_hist'
+  , 'calc_hist.cpp'
+  , include_directories: project_inc
+  , dependencies: [
+        cuda_dep
+      , cccl_dep
+      ]
+  , cpp_args: [cuda_cpp_args]
+  , build_by_default: false
+  , override_options: {
+        'optimization' : '3'
+      } + cuda_overr_options
+  )
+
 cuda_algorithms_lib = static_library(
     'find_intensity_range'
   , 'find_intensity_range.cpp'
   , 'convert_to_fp.cpp'
-  , 'calc_hist.cpp'
   , 'chambolle.cpp'
   , include_directories: project_inc
   , dependencies: [
@@ -33,6 +48,7 @@ executable(
         field_io_lib
       , cuda_algorithms_lib
       , cuda_context_lib
+      , calc_hist_lib
       ]
   , dependencies: [
         boost_dep
