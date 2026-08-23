@@ -1,3 +1,4 @@
+%LTeX: enabled=false
 \documentclass[11pt, twoside, paper = letter, svgnames]{scrartcl}
 
 \usepackage{polyglossia}
@@ -36,18 +37,30 @@
 
 \begin{document}
 
+\sisetup{round-mode = figures, round-precision = 2}%
 \begin{center}
-    \pgfplotstableread{original-hist.txt}\histfile
-    \pgfplotstableread{hist (𝜆 = 0.040).txt}\histfilei
-    \pgfplotstableread{hist (𝜆 = 0.050).txt}\histfilea
-    \pgfplotstableread{hist (𝜆 = 0.060).txt}\histfileb
-    \pgfplotstableread{hist (𝜆 = 0.070).txt}\histfilec
-    \pgfplotstableread{hist (𝜆 = 0.080).txt}\histfiled
-    \pgfplotstableread{hist (𝜆 = 0.090).txt}\histfilee
-    \pgfplotstableread{hist (𝜆 = 0.100).txt}\histfilef
-    \pgfplotstableread{hist (𝜆 = 0.110).txt}\histfileg
-    \pgfplotstableread{hist (𝜆 = 0.120).txt}\histfileh
-
+    \pgfplotstableread{original-hist.txt}\histfile%
+    \pgfplotstableread{hist (𝜆 = 0.040).txt}\histfilei%
+    \pgfplotstableread{hist (𝜆 = 0.050).txt}\histfilea%
+    \pgfplotstableread{hist (𝜆 = 0.060).txt}\histfileb%
+    \pgfplotstableread{hist (𝜆 = 0.070).txt}\histfilec%
+    \pgfplotstableread{hist (𝜆 = 0.080).txt}\histfiled%
+    \pgfplotstableread{hist (𝜆 = 0.090).txt}\histfilee%
+    \pgfplotstableread{hist (𝜆 = 0.100).txt}\histfilef%
+    \pgfplotstableread{hist (𝜆 = 0.110).txt}\histfileg%
+    \pgfplotstableread{hist (𝜆 = 0.120).txt}\histfileh%
+    \pgfmathsetmacro{\muone}{0.182078}%
+    \pgfmathsetmacro{\sigmaone}{0.0349211}%
+    \pgfmathsetmacro{\fracone}{0.1499}%
+    \pgfmathsetmacro{\mutwo}{0.255084}%
+    \pgfmathsetmacro{\sigmatwo}{0.00985271}%
+    \pgfmathsetmacro{\fractwo}{0.02573}%
+    \pgfmathsetmacro{\muthree}{0.444879}%
+    \pgfmathsetmacro{\sigmathree}{0.0254692}%
+    \pgfmathsetmacro{\fracthree}{0.6902}%
+    \pgfmathsetmacro{\mufour}{0.442664}%
+    \pgfmathsetmacro{\sigmafour}{0.091497}%
+    \pgfmathsetmacro{\fracfour}{0.1342}%
     \begin{tikzpicture}
         \begin{axis}[
             width             = 0.9\linewidth
@@ -65,51 +78,40 @@
                     x = intensity, y = {ch0}
                   ] \histfile ;
             \addlegendentry{original}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %       ] \histfilei ;
-            % \addlegendentry{$\lambda = 0.04$}
+
             \addplot+ [line width = 1.5pt, smooth]
                 table [
                     x = intensity, y = {ch0}
                   ] \histfilea ;
             \addlegendentry{$\lambda = 0.05$}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %       ] \histfileb ;
-            % \addlegendentry{$\lambda = 0.06$}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %       ] \histfilec ;
-            % \addlegendentry{$\lambda = 0.07$}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %       ] \histfiled ;
-            % \addlegendentry{$\lambda = 0.08$}
-            \addplot+ [line width = 1.5pt, smooth]
-                table [
-                    x = intensity, y = {ch0}
-                ] \histfilee ;
-            \addlegendentry{$\lambda = 0.09$}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %     ] \histfilef ;
-            % \addlegendentry{$\lambda = 0.10$}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %     ] \histfileg ;
-            % \addlegendentry{$\lambda = 0.11$}
-            % \addplot+ [line width = 1.5pt, smooth]
-            %     table [
-            %         x = intensity, y = {ch0}
-            %     ] \histfileh ;
-            % \addlegendentry{$\lambda = 0.12$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.5, samples = 300] {
+                \fracone / (\sigmaone * sqrt(2 * pi)) * exp(-(x - \muone)^2 / (2 * \sigmaone^2))
+            };
+            \addlegendentry{$\mu = \num{\muone}$, $\sigma = \num{\sigmaone}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.5, samples = 300] {
+                \fractwo / (\sigmatwo * sqrt(2 * pi)) * exp(-(x - \mutwo)^2 / (2 * \sigmatwo^2))
+            };
+            \addlegendentry{$\mu = \num{\mutwo}$, $\sigma = \num{\sigmatwo}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.7, samples = 300] {
+                \fracthree / (\sigmathree * sqrt(2 * pi)) * exp(-(x - \muthree)^2 / (2 * \sigmathree^2))
+            };
+            \addlegendentry{$\mu = \num{\muthree}$, $\sigma = \num{\sigmathree}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.7, samples = 300] {
+                \fracfour / (\sigmafour * sqrt(2 * pi)) * exp(-(x - \mufour)^2 / (2 * \sigmafour^2))
+            };
+            \addlegendentry{$\mu = \num{\mufour}$, $\sigma = \num{\sigmafour}$}
+
+            \addplot+ [line width = 1.5pt, domain = 0:0.7, samples = 300] {
+                \fracone / (\sigmaone * sqrt(2 * pi)) * exp(-(x - \muone)^2 / (2 * \sigmaone^2)) +
+                \fractwo / (\sigmatwo * sqrt(2 * pi)) * exp(-(x - \mutwo)^2 / (2 * \sigmatwo^2)) +
+                \fracthree / (\sigmathree * sqrt(2 * pi)) * exp(-(x - \muthree)^2 / (2 * \sigmathree^2)) +
+                \fracfour / (\sigmafour * sqrt(2 * pi)) * exp(-(x - \mufour)^2 / (2 * \sigmafour^2))
+            };
+            \addlegendentry{The sum of four}
         \end{axis}
     \end{tikzpicture}
 \end{center}

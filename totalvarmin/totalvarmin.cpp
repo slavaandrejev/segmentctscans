@@ -1,33 +1,38 @@
 #include <cstdint>
 #include <ctime>
+#include <filesystem>
 #include <memory>
 #include <tuple>
 #include <vector>
 
 #include <boost/iostreams/device/mapped_file.hpp>
 #include <boost/math/constants/constants.hpp>
+#include <boost/program_options.hpp>
 
 #include <fmt/printf.h>
-#include <fmt/color.h>
 
 #include <opencv2/opencv.hpp>
 
-#include <io/fileinit.h>
 #include <io/biniarchive.h>
-#include <tiffio.h>
+#include <io/binoarchive.h>
 
 #include <cuda-context.h>
+#include <calc_hist.h>
 #include <field.h>
 #include <timeop.h>
 
 #include "find_intensity_range.h"
 #include "convert_to_fp.h"
-#include "calc_hist.h"
 #include "chambolle.h"
 
 namespace bc = boost::math::double_constants;
+namespace fs = std::filesystem;
+namespace po = boost::program_options;
 
 extern template void Field<uint16_t>::load(io::BinIArchive<const char*>&, unsigned);
+extern template void Field<uint16_t>::save(io::BinOArchive<uint8_t*>&, unsigned) const;
+extern template void Field<float>::load(io::BinIArchive<const char*>&, unsigned);
+extern template void Field<float>::save(io::BinOArchive<uint8_t*>&, unsigned) const;
 
 template <typename ElementType, typename Extents>
 void write_png(std::mdspan<ElementType, Extents, layout_cylinder> img, uint32_t col, float 𝜆) {
@@ -47,56 +52,104 @@ void write_png(std::mdspan<ElementType, Extents, layout_cylinder> img, uint32_t 
 }
 
 int main(int argc, char *argv[]) try {
-    auto start_time   = timespec{};
-    auto finish_time  = timespec{};
-    auto elapsed_time = 0.0;
+    auto positional       = po::positional_options_description{};
+    auto cmd_line_options = po::options_description{};
+    auto vm               = po::variables_map{};
 
-    auto in_file = boost::iostreams::mapped_file_source{"sample1_recon_Export.bin"};
+    auto in_file_name       = std::string{};
+    auto out_file_name      = std::string{};
+    auto denoised_file_name = std::string{};
+
+    cmd_line_options.add_options()
+        ("input", po::value<std::string>(&in_file_name)->required(), "input file")
+        ("output,o", po::value<std::string>(&out_file_name), "output file")
+        ("denoised", po::value<std::string>(&denoised_file_name), "denoised output file")
+      ;
+    positional.add("input", 1);
+
+    try {
+        po::store(po::command_line_parser(argc, argv).
+                  positional(positional).
+                  options(cmd_line_options).run(), vm);
+        po::notify(vm);
+    } catch (po::error &x) {
+        fmt::print(stderr, "Command line error: {}\n", x.what());
+        return 1;
+    }
+
+    auto out_file      = std::unique_ptr<FILE, decltype(&fclose)>{nullptr, &fclose};
+    auto denoised_file = std::unique_ptr<FILE, decltype(&fclose)>{nullptr, &fclose};
+    try {
+        if (!fs::exists(in_file_name)) {
+            fmt::print(stderr, "Input file {} doesn't exist\n", in_file_name);
+            return 1;
+        }
+
+        if (0 != vm.count("output")) {
+            out_file.reset(fopen(out_file_name.c_str(), "w"));
+            if (!out_file) {
+                throw std::system_error(errno, std::system_category());
+            }
+        }
+        if (0 != vm.count("denoised")) {
+            denoised_file.reset(fopen(denoised_file_name.c_str(), "w"));
+            if (!denoised_file) {
+                throw std::system_error(errno, std::system_category());
+            }
+        }
+    } catch (std::exception &x) {
+        fmt::print(stderr, "{}\n", x.what());
+        return 1;
+    }
+
+    auto in_file = boost::iostreams::mapped_file_source{in_file_name};
     auto it      = in_file.begin();
     auto end     = it + in_file.size();
     auto ia      = io::BinIArchive{it, end};
 
+    auto t = Timer{};
+
     auto original_img = Field<uint16_t>{};
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    t.start();
         ia >> original_img;
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Read time: {:.6g} s\n", elapsed_time);
+    t.stop("Read time");
 
     auto cuda_context = make_context();
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    t.start();
         auto d_original_img = upload(*cuda_context, original_img.view());
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Upload to GPU time: {:.6g} s\n", elapsed_time);
+    t.stop("Upload to GPU time");
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    t.start();
         auto [lo, hi] = find_intensity_range(*cuda_context, *d_original_img, 0.001);
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Find intensity range time: {:.6g} s\n", elapsed_time);
+    t.stop("Find intensity range time");
     fmt::print("used lo = {}\n", lo); // 5399
     fmt::print("used hi = {}\n", hi); // 12524
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    t.start();
         auto d_img = convert_to_fp(*cuda_context, *d_original_img, lo, hi);
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Convert to FP32 time: {:.6g} s\n", elapsed_time);
+    t.stop("Convert to FP32 time");
     d_original_img.reset();
 
     auto img = Field<float>{original_img.view().mapping()};
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    img.lo(lo);
+    img.hi(hi);
+    t.start();
         download(*cuda_context, *d_img, img.view());
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Download from GPU time: {:.6g} s\n", elapsed_time);
+    t.stop("Download from GPU time");
+
+    if (out_file) {
+        auto m      = img.view().mapping();
+        auto buffer = std::vector<uint8_t>(size_t{4} * m.required_span_size() * 2);
+        auto outit  = buffer.data();
+        auto oa     = io::BinOArchive{outit};
+
+        t.start();
+            oa << img;
+        t.stop("Writing time");
+
+        fwrite(buffer.data(), oa.size(), 1, out_file.get());
+    }
 
     static auto constexpr col = 481;
     static auto constexpr 𝜆   = 0.05f;
@@ -104,12 +157,9 @@ int main(int argc, char *argv[]) try {
     write_png(img.view(), col, 0.0f);
 
     const auto nbins = 500;
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    t.start();
         auto hist = calc_hist(*cuda_context, *d_img, 1.0 / (hi - lo), nbins);
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Histogram time: {:.6g} s\n", elapsed_time);
+    t.stop("Histogram time");
     auto f = std::unique_ptr<FILE, decltype(&fclose)>{
         fopen("original-hist.txt", "wt")
       , &fclose
@@ -119,13 +169,22 @@ int main(int argc, char *argv[]) try {
         fmt::print(f.get(), "{} {}\n", (i + 0.5) / nbins, hist[i]);
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    t.start();
         chambolle(*cuda_context, *d_img, 𝜆, 1.0f / 6.0f * 0.99f, 150);
-    clock_gettime(CLOCK_MONOTONIC, &finish_time);
-    elapsed_time = finish_time - start_time;
-    fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
-               "Chambolle time: {:.6g} s\n", elapsed_time);
+    t.stop("Chambolle time");
     download(*cuda_context, *d_img, img.view());
+    if (denoised_file) {
+        auto m      = img.view().mapping();
+        auto buffer = std::vector<uint8_t>(size_t{4} * m.required_span_size() * 2);
+        auto outit  = buffer.data();
+        auto oa     = io::BinOArchive{outit};
+
+        t.start();
+            oa << img;
+        t.stop("Writing denoised file time");
+
+        fwrite(buffer.data(), oa.size(), 1, denoised_file.get());
+    }
 
     hist = calc_hist(*cuda_context, *d_img, 1.0 / (hi - lo), nbins);
     f = std::unique_ptr<FILE, decltype(&fclose)>{

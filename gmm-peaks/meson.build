@@ -9,37 +9,20 @@ field_io_lib = static_library(
       }
   )
 
-cuda_algorithms_lib = static_library(
-    'find_intensity_range'
-  , 'find_intensity_range.cpp'
-  , 'convert_to_fp.cpp'
-  , 'chambolle.cpp'
-  , include_directories: project_inc
-  , dependencies: [
-        cuda_dep
-      , cccl_dep
-      ]
-  , cpp_args: [cuda_cpp_args]
-  , build_by_default: false
-  , override_options: cuda_overr_options
-  )
-
 executable(
-    'totalvarmin'
-  , 'totalvarmin.cpp'
+    'gmm-peaks'
+  , 'gmm-peaks.cpp'
   , include_directories: project_inc
   , link_whole: [
         field_io_lib
-      , cuda_algorithms_lib
-      , cuda_context_lib
       , calc_hist_lib
+      , cuda_context_lib
       ]
   , dependencies: [
         boost_dep
+      , eigen_dep
       , fmt_dep
-      , libtiff_dep
       , mdspan_dep
       , omp_dep
-      , opencv_dep
       , range_dep
       ])

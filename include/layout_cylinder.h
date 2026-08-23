@@ -40,6 +40,7 @@ struct layout_cylinder {
         index_type col_begin_{};
         index_type col_end_{};
         index_type span_size_{};
+        index_type data_size_{};
 
         mapping_tables<index_type> csc{};
 
@@ -71,6 +72,7 @@ struct layout_cylinder {
               , .col_begin_ = col_begin_
               , .col_end_   = col_end_
               , .span_size_ = required_span_size()
+              , .data_size_ = data_size_
               , .csc        = csc
               };
         }
@@ -82,6 +84,7 @@ struct layout_cylinder {
         }
 
         constexpr auto required_span_size() const -> index_type { return span_size_; }
+        constexpr auto data_size() const -> index_type { return data_size_; }
 
         constexpr auto extents() const -> const Extents & { return ext_; }
 
@@ -125,6 +128,7 @@ struct layout_cylinder {
           , nstride_{other.nstride_}
           , col_begin_{other.col_begin_}
           , col_end_{other.col_end_}
+          , data_size_{other.data_size_}
           , start_row_(other.csc.start_row_, other.csc.start_row_ + ext_.extent(2))
           , base_(other.csc.base_, other.csc.base_ + ext_.extent(2) + 1)
         {}
@@ -169,6 +173,10 @@ struct layout_cylinder {
                 }
             }
             base_[e.extent(2)] = off; // total size
+            for (auto col = col_begin_; col_end_ > col; ++col) {
+                data_size_ += (row_end(col) - row_begin(col));
+            }
+            data_size_ *= e.extent(0);
         }
 
         auto mapping(mapping_tables<index_type> csc) const {
@@ -178,6 +186,7 @@ struct layout_cylinder {
               , .col_begin_ = col_begin_
               , .col_end_   = col_end_
               , .span_size_ = required_span_size()
+              , .data_size_ = data_size_
               , .csc        = csc
               };
         }
@@ -189,13 +198,20 @@ struct layout_cylinder {
               });
         }
 
+        auto row_begin(index_type col) const { return start_row_[col]; }
+        auto row_end(index_type col) const {
+            return start_row_[col] + (base_[col + 1] - base_[col]) / nstride_;
+        }
+
         auto required_span_size() const -> index_type { return base_.back(); }
+        auto data_size() const -> index_type { return data_size_; }
 
 private:
         extents_type ext_{};
         index_type   nstride_{};
         index_type   col_begin_{~index_type{}};
         index_type   col_end_{};
+        index_type   data_size_{};
         std::vector<index_type> start_row_{};
         std::vector<index_type> base_{}; // per-col base offset; last = total
 
@@ -279,6 +295,12 @@ private:
                     base_[i] = index_type(base_[i - 1] + s);
                 }
             }
+
+            data_size_ = 0;
+            for (auto col = col_begin_; col_end_ > col; ++col) {
+                data_size_ += (row_end(col) - row_begin(col));
+            }
+            data_size_ *= ext_.extent(0);
         }
 
         BOOST_SERIALIZATION_SPLIT_MEMBER()

@@ -16,6 +16,7 @@
 
 #include <io/primitivetypes.h>
 #include <layout_cylinder.h>
+#include <minsizetype.h>
 
 template <typename ElementType>
     requires std::integral<std::remove_cv_t<ElementType>> || std::floating_point<std::remove_cv_t<ElementType>>
@@ -59,6 +60,12 @@ public:
         std::swap(mapping_storage, other.mapping_storage);
     }
 
+    void lo(uint16_t x) { lo_ = x; }
+    void hi(uint16_t x) { hi_ = x; }
+
+    auto lo() const { return lo_; }
+    auto hi() const { return hi_; }
+
 private:
     static constexpr auto byte_alignment = 128;
     using allocator = boost::alignment::aligned_allocator<value_type, byte_alignment>;
@@ -66,20 +73,29 @@ private:
     std::vector<value_type, allocator> storage;
     layout_cylinder::mapping_storage<extents_type> mapping_storage;
 
+    uint16_t lo_{}; // if the storage is float, this is the original image level corresponding to 0.0f
+    uint16_t hi_{}; // if the storage is float, this is the original image level corresponding to 1.0f
+
     template <typename Archive>
     void save(Archive &ar, const unsigned int) const {
-        static_assert(std::is_integral_v<value_type>);
         using namespace io;
 
         ar << mapping_storage;
+        if constexpr (std::is_same_v<value_type, float>) {
+            ar << u<16>(lo_);
+            ar << u<16>(hi_);
+        }
         auto span = view();
         auto m    = span.mapping();
         for (auto col = m.col_begin(); m.col_end() > col; ++col) {
             for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
                 for (auto n = uint32_t{}; m.n_images() > n; ++n) {
-                    using unsigned_value_type = std::make_unsigned_t<value_type>;
                     auto static constexpr nbits = sizeof(value_type) * 8;
-                    ar << u<nbits>(unsigned_value_type(span[n, row, col]));
+                    using cont_type = decltype(MinSizeUInt<nbits>())::type;
+                    auto cont = cont_type{};
+                    std::memcpy(&cont, &span[n, row, col], nbits / 8);
+
+                    ar << u<nbits>(cont);
                 }
             }
         }
@@ -87,20 +103,30 @@ private:
 
     template <typename Archive>
     void load(Archive &ar, const unsigned int) {
-        static_assert(std::is_integral_v<value_type>);
         using namespace io;
 
         ar >> mapping_storage;
         storage.resize(mapping_storage.required_span_size());
+        if constexpr (std::is_same_v<value_type, float>) {
+            auto v = u<16>{};
+            ar >> v;
+            lo_ = uint16_t(v);
+            ar >> v;
+            hi_ = uint16_t(v);
+        }
         auto span = view();
         auto m    = span.mapping();
         for (auto col = m.col_begin(); m.col_end() > col; ++col) {
             for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
                 for (auto n = uint32_t{}; m.n_images() > n; ++n) {
                     auto static constexpr nbits = sizeof(value_type) * 8;
+                    using cont_type = decltype(MinSizeUInt<nbits>())::type;
+                    auto cont = cont_type{};
+
                     auto v = u<nbits>{};
                     ar >> v;
-                    span[n, row, col] = value_type(v);
+                    cont = cont_type(v);
+                    std::memcpy(&span[n, row, col], &cont, nbits / 8);
                 }
             }
         }

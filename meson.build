@@ -32,6 +32,7 @@ boost_dep    = dependency('boost', modules: ['headers', 'archive', 'serializatio
 cccl_dep     = dependency('cccl', method: 'cmake', modules: ['CCCL::Thrust', 'CCCL::CUB', 'CCCL::libcudacxx'])
 clarabel_dep = dependency('Clarabel', method: 'cmake', modules: ['Clarabel::shared'])
 cuda_dep     = dependency('cuda')
+eigen_dep    = dependency('Eigen3', method: 'cmake', modules: 'Eigen3::Eigen')
 fmt_dep      = dependency('fmt')
 libtiff_dep  = dependency('libtiff-4')
 mdspan_dep   = dependency('mdspan', method: 'cmake')
@@ -44,5 +45,7 @@ cuda_overr_options = {'cpp_std': 'gnu++23'}
 
 subdir('totalvarmin2d')
 subdir('cuda-context')
+subdir('calc_hist')
 subdir('totalvarmin')
 subdir('transpose')
+subdir('gmm-peaks')

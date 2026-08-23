@@ -2,15 +2,11 @@
 
 #include <cstdlib>
 #include <ctime>
+#include <string_view>
 
-#if defined(_WIN32)
-#include <Windows.h>
-inline double operator - (const LARGE_INTEGER &t1, const LARGE_INTEGER &t2) {
-    auto freq = LARGE_INTEGER{};
-    QueryPerformanceFrequency(&freq);
-    return double(t1.QuadPart - t2.QuadPart) / freq.QuadPart;
-}
-#else
+#include <fmt/printf.h>
+#include <fmt/color.h>
+
 inline double operator - (const timespec &t1, const timespec &t2) {
     auto s  = int64_t{t1.tv_sec  - t2.tv_sec};
     auto ns = int64_t{t1.tv_nsec - t2.tv_nsec};
@@ -27,4 +23,17 @@ inline double operator - (const timespec &t1, const timespec &t2) {
     }
     return s + ns * 1e-9;
 }
-#endif
+
+struct Timer {
+    auto start() {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+    }
+    auto stop(std::string_view msg) {
+        clock_gettime(CLOCK_MONOTONIC, &finish_time);
+        auto elapsed_time = finish_time - start_time;
+        fmt::print(fmt::fg(fmt::color::medium_purple) | fmt::emphasis::bold,
+                   "{}: {:.6g} s\n", msg, elapsed_time);
+    }
+    timespec start_time{};
+    timespec finish_time{};
+};
