@@ -13,7 +13,6 @@
 
 #include <range/v3/numeric/accumulate.hpp>
 
-#include <io/fileinit.h>
 #include <io/biniarchive.h>
 
 #include <calc_hist.h>
