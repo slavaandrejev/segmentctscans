@@ -11,7 +11,7 @@
 #include <boost/serialization/tracking.hpp>
 #include <boost/serialization/wrapper.hpp>
 
-#if defined(__CUDA__) || defined(__INTELLISENSE__)
+#if defined(__CUDA__)
 #include <cuda/buffer>
 #endif
 
@@ -44,7 +44,7 @@ struct layout_cylinder {
 
         mapping_tables<index_type> csc{};
 
-#if defined(__CUDA__) || defined(__INTELLISENSE__)
+#if defined(__CUDA__)
         template <typename Index>
         struct device_mapping_tables {
             cuda::device_buffer<Index> start_row;
