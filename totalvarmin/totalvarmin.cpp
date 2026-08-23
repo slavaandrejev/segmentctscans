@@ -60,10 +60,13 @@ int main(int argc, char *argv[]) try {
     auto out_file_name      = std::string{};
     auto denoised_file_name = std::string{};
 
+    auto 𝜆 = 0.05f;
+
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "input file")
         ("output,o", po::value<std::string>(&out_file_name), "output file")
         ("denoised", po::value<std::string>(&denoised_file_name), "denoised output file")
+        ("lambda", po::value(&𝜆), "Chambolle's algorithm parameter")
       ;
     positional.add("input", 1);
 
@@ -152,7 +155,6 @@ int main(int argc, char *argv[]) try {
     }
 
     static auto constexpr col = 481;
-    static auto constexpr 𝜆   = 0.05f;
 
     write_png(img.view(), col, 0.0f);
 
