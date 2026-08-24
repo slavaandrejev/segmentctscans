@@ -1,0 +1,134 @@
+%LTeX: enabled=false
+\documentclass[11pt, twoside, paper = letter, svgnames]{scrartcl}
+
+\usepackage{polyglossia}
+\setdefaultlanguage[variant = american]{english}
+
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{unicode-math}
+\usepackage{mathtools}
+\usepackage{lualatex-math}
+\usepackage{xcolor}
+\usepackage{luacolor}
+\usepackage{scrlayer-scrpage}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{siunitx}
+\usepackage{physics}
+
+\usepgfplotslibrary{colorbrewer}
+\pgfplotsset{
+    compat = 1.18
+  , cycle list/Dark2-8
+  }
+
+\usetikzlibrary{pgfplots.colorbrewer}
+
+\setmainfont{STIX Two Text}
+\setmathfont{STIX Two Math}
+\setmonofont{Libertinus Mono}[Scale = MatchLowercase]
+\setsansfont{Libertinus Sans}[Scale = MatchLowercase]
+
+\KOMAoptions{DIV = 17, fontsize = 11, BCOR = 5mm}
+
+\pagestyle{scrheadings}
+\renewcommand*{\titlepagestyle}{plain.scrheadings}
+
+\begin{document}
+
+\sisetup{round-mode = figures, round-precision = 2}%
+\begin{center}
+    \pgfplotstableread{original-hist.txt}\histfile%
+    \pgfplotstableread{hist (𝜆 = 0.050).txt}\histfilea%
+    \pgfplotstableread{hist (𝜆 = 0.080).txt}\histfileb%
+    \pgfplotstableread{hist (𝜆 = 0.100).txt}\histfilec%
+    \pgfmathsetmacro{\muone}{0.166565}%
+    \pgfmathsetmacro{\sigmaone}{0.0196109}%
+    \pgfmathsetmacro{\fracone}{0.07526}%
+    \pgfmathsetmacro{\mutwo}{0.231481}%
+    \pgfmathsetmacro{\sigmatwo}{0.0179284}%
+    \pgfmathsetmacro{\fractwo}{0.07489}%
+    \pgfmathsetmacro{\muthree}{0.423983}%
+    \pgfmathsetmacro{\sigmathree}{0.0746632}%
+    \pgfmathsetmacro{\fracthree}{0.02923}%
+    \pgfmathsetmacro{\mufour}{0.451109}%
+    \pgfmathsetmacro{\sigmafour}{0.0237601}%
+    \pgfmathsetmacro{\fracfour}{0.7909}%
+    \pgfmathsetmacro{\mufive}{0.530193}%
+    \pgfmathsetmacro{\sigmafive}{0.0202666}%
+    \pgfmathsetmacro{\fracfive}{0.02975}%
+    \begin{tikzpicture}
+        \begin{axis}[
+            width             = 0.9\linewidth
+          , height            = 0.556\linewidth
+          , scale only axis
+          , xlabel            = {Intensity}
+          , ylabel            = {Probability density}
+          , grid              = major
+          , enlargelimits     = false
+          , legend cell align = {left}
+          , no markers
+          ]
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = intensity, y = {ch0}
+                  ] \histfile;
+            \addlegendentry{original}
+
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = intensity, y = {ch0}
+                  ] \histfilea;
+            \addlegendentry{$\lambda = 0.05$}
+
+            % \addplot+ [line width = 1.5pt, smooth]
+            %     table [
+            %         x = intensity, y = {ch0}
+            %       ] \histfileb;
+            % \addlegendentry{$\lambda = 0.08$}
+
+            % \addplot+ [line width = 1.5pt, smooth]
+            %     table [
+            %         x = intensity, y = {ch0}
+            %       ] \histfilec;
+            % \addlegendentry{$\lambda = 0.10$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.5, samples = 300] {
+                \fracone / (\sigmaone * sqrt(2 * pi)) * exp(-(x - \muone)^2 / (2 * \sigmaone^2))
+            };
+            \addlegendentry{$\mu = \num{\muone}$, $\sigma = \num{\sigmaone}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.5, samples = 300] {
+                \fractwo / (\sigmatwo * sqrt(2 * pi)) * exp(-(x - \mutwo)^2 / (2 * \sigmatwo^2))
+            };
+            \addlegendentry{$\mu = \num{\mutwo}$, $\sigma = \num{\sigmatwo}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.7, samples = 300] {
+                \fracthree / (\sigmathree * sqrt(2 * pi)) * exp(-(x - \muthree)^2 / (2 * \sigmathree^2))
+            };
+            \addlegendentry{$\mu = \num{\muthree}$, $\sigma = \num{\sigmathree}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.7, samples = 300] {
+                \fracfour / (\sigmafour * sqrt(2 * pi)) * exp(-(x - \mufour)^2 / (2 * \sigmafour^2))
+            };
+            \addlegendentry{$\mu = \num{\mufour}$, $\sigma = \num{\sigmafour}$}
+
+            \addplot+ [line width = 1.5pt, dashed, domain = 0:0.7, samples = 300] {
+                \fracfive / (\sigmafive * sqrt(2 * pi)) * exp(-(x - \mufive)^2 / (2 * \sigmafive^2))
+            };
+            \addlegendentry{$\mu = \num{\mufive}$, $\sigma = \num{\sigmafive}$}
+
+            % \addplot+ [line width = 1.5pt, dashed, domain = 0:0.7, samples = 300] {
+            %     \fracone / (\sigmaone * sqrt(2 * pi)) * exp(-(x - \muone)^2 / (2 * \sigmaone^2)) +
+            %     \fractwo / (\sigmatwo * sqrt(2 * pi)) * exp(-(x - \mutwo)^2 / (2 * \sigmatwo^2)) +
+            %     \fracthree / (\sigmathree * sqrt(2 * pi)) * exp(-(x - \muthree)^2 / (2 * \sigmathree^2)) +
+            %     \fracfour / (\sigmafour * sqrt(2 * pi)) * exp(-(x - \mufour)^2 / (2 * \sigmafour^2)) +
+            %     \fracfive / (\sigmafive * sqrt(2 * pi)) * exp(-(x - \mufive)^2 / (2 * \sigmafive^2))
+            % };
+            % \addlegendentry{Envelope}
+        \end{axis}
+    \end{tikzpicture}
+\end{center}
+
+\end{document}
