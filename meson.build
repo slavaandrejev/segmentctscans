@@ -40,7 +40,12 @@ omp_dep      = dependency('openmp')
 opencv_dep   = dependency('OpenCV', method: 'cmake')
 range_dep    = dependency('range-v3', method: 'cmake')
 
-cuda_cpp_args = ['-x', 'cuda', '--cuda-gpu-arch=sm_86', '-Wno-unknown-cuda-version', '-Wno-unsupported-target-opt']
+cuda_cpp_args = [
+    '-x', 'cuda'
+  , '--cuda-gpu-arch=sm_86'
+  , '-Wno-unknown-cuda-version'
+  , '-Wno-unsupported-target-opt'
+  ]
 cuda_overr_options = {'cpp_std': 'gnu++23'}
 
 subdir('totalvarmin2d')
@@ -49,3 +54,4 @@ subdir('calc_hist')
 subdir('totalvarmin')
 subdir('transpose')
 subdir('gmm-peaks')
+subdir('potts-model')

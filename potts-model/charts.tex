@@ -1,0 +1,62 @@
+%LTeX: enabled=false
+\documentclass[11pt, twoside, paper = letter, svgnames]{scrartcl}
+
+\usepackage{polyglossia}
+\setdefaultlanguage[variant = american]{english}
+
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{unicode-math}
+\usepackage{mathtools}
+\usepackage{lualatex-math}
+\usepackage{xcolor}
+\usepackage{luacolor}
+\usepackage{scrlayer-scrpage}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{siunitx}
+\usepackage{physics}
+
+\usepgfplotslibrary{colorbrewer}
+\pgfplotsset{
+    compat = 1.18
+  , cycle list/Dark2-8
+  }
+
+\usetikzlibrary{pgfplots.colorbrewer}
+
+\setmainfont{STIX Two Text}
+\setmathfont{STIX Two Math}
+\setmonofont{Libertinus Mono}[Scale = MatchLowercase]
+\setsansfont{Libertinus Sans}[Scale = MatchLowercase]
+
+\KOMAoptions{DIV = 17, fontsize = 11, BCOR = 5mm}
+
+\pagestyle{scrheadings}
+\renewcommand*{\titlepagestyle}{plain.scrheadings}
+
+\begin{document}
+
+\sisetup{round-mode = figures, round-precision = 2}%
+
+\begin{center}
+    \pgfplotstableread{maxΔq.txt}\histfilea%
+    \begin{tikzpicture}
+        \begin{semilogyaxis}[
+            title             = Chambolle–Pock primal-dual algorithm convergence
+          , width             = 0.9\linewidth
+          , height            = 0.556\linewidth
+          , scale only axis
+          , xlabel            = {Iteration}
+          , ylabel            = {$\max{\Delta q}$}
+          , grid              = major
+          , enlargelimits     = false
+          , xmax              = 2000
+          , no markers
+          ]
+            \addplot+ [line width = 1.5pt, smooth] table [x = {iter}, y = {dqmax}] \histfilea;
+        \end{semilogyaxis}
+    \end{tikzpicture}
+\end{center}
+
+\end{document}
