@@ -11,6 +11,7 @@
 
 #include <Eigen/Dense>
 
+#include <range/v3/algorithm/sample.hpp>
 #include <range/v3/numeric/accumulate.hpp>
 
 #include <io/biniarchive.h>
@@ -25,6 +26,7 @@
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 namespace rs = ranges;
+namespace rv = rs::views;
 
 using namespace Eigen;
 
@@ -39,11 +41,13 @@ int main(int argc, char *argv[]) try {
     auto denoised_file_name = std::string{};
     auto noised_file_name   = std::string{};
     auto init_peaks         = std::vector<double>{};
+    auto tail_thr           = 0.003f;
 
     cmd_line_options.add_options()
         ("denoised", po::value<std::string>(&denoised_file_name)->required(), "Denoised input file")
         ("noised", po::value<std::string>(&noised_file_name)->required(), "Raw input file")
         ("peaks", po::value(&init_peaks)->multitoken(), "Initial peaks")
+        ("tailthr", po::value(&tail_thr)->multitoken(), "Threshold to cut the tail of the histogram")
       ;
 
     try {
@@ -59,6 +63,10 @@ int main(int argc, char *argv[]) try {
     try {
         if (!fs::exists(denoised_file_name)) {
             fmt::print(stderr, "Input file {} doesn't exist\n", denoised_file_name);
+            return 1;
+        }
+        if (!fs::exists(noised_file_name)) {
+            fmt::print(stderr, "Input file {} doesn't exist\n", noised_file_name);
             return 1;
         }
     } catch (std::exception &x) {
@@ -77,7 +85,6 @@ int main(int argc, char *argv[]) try {
         ia >> denoised_img;
     t.stop("Read time");
 
-
     auto hi_data_thr = 0.0f;
     {
         auto cuda_context = make_context();
@@ -89,7 +96,6 @@ int main(int argc, char *argv[]) try {
             auto hist = calc_hist(*cuda_context, *d_denoised_img, 1.0 / (denoised_img.hi() - denoised_img.lo()), nbins);
         t.stop("Histogram time");
         const auto total      = rs::accumulate(hist, float{});
-        const auto tail_thr   = 0.003f;
         auto const pct_hi_thr = (1.0 - tail_thr) * total;
         auto hi_thr_idx = hist.size();
         auto hist_cum = float{};
@@ -109,12 +115,18 @@ int main(int argc, char *argv[]) try {
     auto v = denoised_img.view();
     auto m = v.mapping();
     auto linear_data = std::vector<float>(m.data_size());
+    auto eligible    = std::vector<size_t>();
+    eligible.reserve(m.data_size());
     t.start();
     auto count = size_t{};
     for (auto col = m.col_begin(); m.col_end() > col; ++col) {
         for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
             for (auto k = uint32_t{}; m.n_images() > k; ++k) {
-                linear_data[count++] = v[k, row, col];
+                auto s = linear_data[count] = v[k, row, col];
+                if (hi_data_thr >= s) {
+                    eligible.push_back(count);
+                }
+                ++count;
             }
         }
     }
@@ -124,17 +136,19 @@ int main(int argc, char *argv[]) try {
 
     auto rd       = std::random_device{};
     auto gen      = std::mt19937{rd()};
-    auto rand_idx = std::uniform_int_distribution(uint32_t{}, uint32_t(linear_data.size() - 1));
     auto samples  = samples_t{1, N};
     auto indices  = std::vector<size_t>(N);
-    auto clusters = clusters_t{N, 1};
-    auto dist     = VectorXf{init_peaks.size()};
-    for (auto i = 0; N > i; ++i) {
-        auto idx = uint32_t{};
-        while (hi_data_thr < linear_data[idx = rand_idx(gen)]);
 
-        indices[i] = idx;
-        samples[i] = linear_data[idx];
+    if (eligible.size() > N) {
+        rs::sample(eligible, indices.begin(), N, gen);
+    } else {
+        indices = eligible;
+    }
+
+    auto clusters = clusters_t{indices.size(), 1};
+    auto dist     = VectorXf{init_peaks.size()};
+    for (auto i = size_t{}; indices.size() > i; ++i) {
+        samples[i] = linear_data[indices[i]];
         for (auto c = size_t{}; init_peaks.size() > c; ++c) {
             dist[c] = std::abs(centers[c] - samples[i]);
         }
@@ -152,7 +166,7 @@ int main(int argc, char *argv[]) try {
                 "attempt {:3}, iteration {:4}: NLL = {:.9f}\n",
                 attempt, iter, log_ℒ);
         }
-    );
+      );
     fmt::print("NLL = {:.9f}\n", log_ℒ);
     using cov_t = Matrix<double, 1, 1>;
     for (auto k = size_t{}; init_peaks.size() > k; ++k) {
@@ -225,7 +239,23 @@ catch (std::exception &x) {
 }
 
 // sample1_recon_Export.tiff
-// Phase 0 (raw data): c = 0.176788, sigma = 0.0667715, fraction = 0.1512
-// Phase 1 (raw data): c = 0.256711, sigma = 0.0553384, fraction = 0.02486
-// Phase 2 (raw data): c = 0.445425, sigma = 0.0672773, fraction = 0.6906
-// Phase 3 (raw data): c = 0.44537,  sigma = 0.126777,  fraction = 0.1333
+// Cluster 0:
+//     Deviations along axes: 0.0196109
+//     Center: 0.166565
+// Cluster 1:
+//     Deviations along axes: 0.0179284
+//     Center: 0.231481
+// Cluster 2:
+//     Deviations along axes: 0.0746632
+//     Center: 0.423983
+// Cluster 3:
+//     Deviations along axes: 0.0237601
+//     Center: 0.451109
+// Cluster 4:
+//     Deviations along axes: 0.0202666
+//     Center: 0.530193
+// Phase 0 (raw data): c = 0.155431, sigma = 0.0657028, fraction = 0.07526
+// Phase 1 (raw data): c = 0.22989,  sigma = 0.0617947, fraction = 0.07489
+// Phase 2 (raw data): c = 0.349481, sigma = 0.11344,   fraction = 0.02923
+// Phase 3 (raw data): c = 0.451221, sigma = 0.071215,  fraction = 0.7909
+// Phase 4 (raw data): c = 0.580403, sigma = 0.0593533, fraction = 0.02975
