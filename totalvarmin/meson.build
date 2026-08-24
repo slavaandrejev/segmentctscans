@@ -10,7 +10,7 @@ field_io_lib = static_library(
   )
 
 cuda_algorithms_lib = static_library(
-    'find_intensity_range'
+    'cuda_algorithms'
   , 'find_intensity_range.cpp'
   , 'convert_to_fp.cpp'
   , 'chambolle.cpp'
