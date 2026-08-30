@@ -1,6 +1,8 @@
 #include <array>
+#include <cmath>
 #include <exception>
 #include <filesystem>
+#include <limits>
 
 #include <boost/iostreams/device/mapped_file.hpp>
 #include <boost/program_options.hpp>
@@ -45,10 +47,12 @@ int main(int argc, char *argv[]) try {
     auto cmd_line_options = po::options_description{};
     auto vm               = po::variables_map{};
 
-    auto in_file_name       = std::string{};
+    auto in_file_name     = std::string{};
+    auto rawout_file_name = std::string{};
 
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "input file")
+        ("rawout", po::value<std::string>(&rawout_file_name), "denoised output file")
       ;
     positional.add("input", 1);
 
@@ -62,12 +66,17 @@ int main(int argc, char *argv[]) try {
         return 1;
     }
 
-    auto out_file      = std::unique_ptr<FILE, decltype(&fclose)>{nullptr, &fclose};
-    auto denoised_file = std::unique_ptr<FILE, decltype(&fclose)>{nullptr, &fclose};
+    auto rawout_file = std::unique_ptr<FILE, decltype(&fclose)>{nullptr, &fclose};
     try {
         if (!fs::exists(in_file_name)) {
             fmt::print(stderr, "Input file {} doesn't exist\n", in_file_name);
             return 1;
+        }
+        if (0 != vm.count("rawout")) {
+            rawout_file.reset(fopen(rawout_file_name.c_str(), "w"));
+            if (!rawout_file) {
+                throw std::system_error(errno, std::system_category());
+            }
         }
     } catch (std::exception &x) {
         fmt::print(stderr, "{}\n", x.what());
@@ -97,6 +106,7 @@ int main(int argc, char *argv[]) try {
 
     auto 𝜏  = 0.99f * std::sqrt(1.0f / 12.0f);
     auto ci = std::array<float, 3>{0.155431f, 0.22989f, 0.451221f};
+    // auto ci = std::array<float, 3>{0.2f, 0.451221f, 0.580403f};
     t.start();
         potts_min_partition(
             *cuda_context
@@ -109,8 +119,70 @@ int main(int argc, char *argv[]) try {
     t.start();
         download(*cuda_context, *d_img, img.view());
     t.stop("Download from GPU time");
+    d_img.reset();
 
     write_png(img.view(), 480, 𝜆);
+
+    if (rawout_file) {
+        auto v = img.view();
+        auto m = v.mapping();
+        auto row_begin = std::numeric_limits<std::decay_t<decltype(m.row_begin(0))>>::max();
+        auto row_end   = std::numeric_limits<std::decay_t<decltype(m.row_end(0))>>::min();
+        for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+            row_begin = std::min(row_begin, m.row_begin(col));
+            row_end   = std::max(row_end, m.row_end(col));
+        }
+        auto row_size = row_end - row_begin;
+        auto col_size = m.col_end() - m.col_begin();
+        fmt::print(
+            "Dimensions of the raw file: slices = {}, rows = {}, columns = {}\n"
+          , m.n_images(), row_size, col_size
+          );
+        fmt::print("Slices (TIFF images, the plane is perpendicular to the cylinder axis) is"
+                   " the most dense dimension. The next is rows. Finally, columns is the most sparse.\n");
+        auto buffer = std::vector<uint8_t>();
+        for (auto c = 0; col_size > c; ++c) {
+            for (auto r = 0; row_size > r; ++r) {
+                for (auto i = 0; m.n_images() > i; ++i) {
+                    if ((m.col_begin() <= c && c < m.col_end()) &&
+                        (m.row_begin(c) <= r && r < m.row_end(c)))
+                    {
+                        buffer.push_back(
+                            uint8_t(
+                                std::min(
+                                    255
+                                  , std::max(
+                                        0
+                                      , int(std::round(255 * v[i, r, c]))
+                                      )
+                                  )
+                              )
+                          );
+                    } else {
+                        buffer.push_back(255);
+                    }
+                }
+            }
+        }
+        fmt::print(rawout_file.get(),
+            "<?xml version=\"1.0\"?>\n"
+            "<VTKFile type=\"ImageData\" byte_order=\"LittleEndian\">\n"
+            "  <ImageData WholeExtent=\"0 {} 0 {} 0 {}\">\n"
+            "    <Piece Extent=\"0 {} 0 {} 0 {}\">\n"
+            "      <PointData Scalars=\"labels\">\n"
+            "        <DataArray type=\"UInt8\" Name=\"labels\" format=\"appended\" offset=\"0\"/>\n"
+            "      </PointData>\n"
+            "    </Piece>\n"
+            "  </ImageData>\n"
+            "  <AppendedData encoding=\"raw\">\n_",
+            m.n_images() - 1, row_size - 1, col_size - 1, m.n_images() - 1, row_size - 1, col_size - 1);
+        auto nbytes = uint32_t(buffer.size() * sizeof(buffer[0]));
+        fwrite(&nbytes, 4, 1, rawout_file.get());
+        fwrite(buffer.data(), sizeof(buffer[0]), buffer.size(), rawout_file.get());
+        fmt::print(rawout_file.get(), "\n  </AppendedData>\n</VTKFile>\n");
+        rawout_file.reset();
+    }
+    cuda_context.reset();
 }
 catch (std::exception &x) {
     fmt::print(stderr, "{}\n", x.what());
