@@ -20,7 +20,7 @@ potts_min_part_lib = static_library(
       ]
   , cpp_args: [cuda_cpp_args]
   , build_by_default: false
-  , override_options: cuda_overr_options
+  , override_options: cuda_overr_options + {'optimization' : '3'}
   )
 
 executable(
