@@ -9,6 +9,7 @@
 #include <fmt/printf.h>
 
 #include <opencv2/opencv.hpp>
+#include <opencv2/geometry.hpp>
 
 #include <range/v3/algorithm/max_element.hpp>
 
