@@ -51,6 +51,7 @@ void download(
         context.stream()
       , cuda::std::span{in.data_handle(),  in.data_handle()  + in_mapping.required_span_size()}
       , cuda::std::span{out.data_handle(), out.data_handle() + out_mapping.required_span_size()});
+    context.stream().sync();
 }
 
 template class DeviceField<uint16_t>;
