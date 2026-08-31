@@ -1,5 +1,5 @@
 project(
-    'kapitza-pendulum'
+    'soil-ct-scan'
   , ['c', 'cpp']
   , version : '0.1'
   , meson_version: '>=1.2'
@@ -18,6 +18,7 @@ endif
 add_project_arguments(
     '-DMDSPAN_IMPL_STANDARD_NAMESPACE=std'
   , '-DMDSPAN_USE_BRACKET_OPERATOR=1'
+  , '-Wno-deprecated-declarations'
   , language: ['cpp']
   )
 
@@ -28,7 +29,7 @@ endif
 
 project_inc = include_directories('include')
 
-boost_dep    = dependency('boost', modules: ['headers', 'archive', 'serialization', 'program_options', 'iostreams'])
+boost_dep    = dependency('boost', modules: ['archive', 'serialization', 'program_options', 'iostreams'])
 cccl_dep     = dependency('cccl', method: 'cmake', modules: ['CCCL::Thrust', 'CCCL::CUB', 'CCCL::libcudacxx'])
 clarabel_dep = dependency('Clarabel', method: 'cmake', modules: ['Clarabel::shared'])
 cuda_dep     = dependency('cuda')
