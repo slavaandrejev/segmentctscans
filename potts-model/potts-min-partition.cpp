@@ -107,6 +107,10 @@ struct grad_kernel {
             if (m.n_images() > n) {
                 auto vk = 1.0f, vk_n = 1.0f, vk_r = 1.0f, vk_c = 1.0f;
                 auto vi = 0.0f, vi_n = 0.0f, vi_r = 0.0f, vi_c = 0.0f;
+
+                auto xi_k = std::array<float, 3>{};
+                auto xi_i = xi_k;
+
                 auto q = std::array<float, K * 3>{};
                 STATIC_FOR(i)
                     if constexpr (hana::llong_c<K> - 1_c > i) {
@@ -145,14 +149,25 @@ struct grad_kernel {
                         q[3_c * i + 2_c] = vi_c - vi;
                     }
 
+                    if constexpr (hana::llong_c<K> - 1_c > i) {
+                        xi_i = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...axis) {
+                            return std::array<float, 3>{{xi[i * 3_c + axis][n, row, col]...}};
+                        });
+                        hana::for_each(hana::make_range(0_c, 3_c), [&](auto axis) {
+                            xi_k[axis] -= xi_i[axis];
+                        });
+                    } else {
+                        xi_i = xi_k;
+                    }
+
                     q[3_c * i] *= 𝜏2;
-                    q[3_c * i] += xi[i * 3_c][n, row, col];
+                    q[3_c * i] += xi_i[0_c];
 
                     q[3_c * i + 1_c] *= 𝜏2;
-                    q[3_c * i + 1_c] += xi[i * 3_c + 1_c][n, row, col];
+                    q[3_c * i + 1_c] += xi_i[1_c];
 
                     q[3_c * i + 2_c] *= 𝜏2;
-                    q[3_c * i + 2_c] += xi[i * 3_c + 2_c][n, row, col];
+                    q[3_c * i + 2_c] += xi_i[2_c];
                 STATIC_FOR_END(i, 0, K);
                 auto qi1i2 = std::array<std::array<float, 3>, K * (K - 1) / 2>{};
                 for (auto sweep = 0; 20 > sweep; ++sweep) {
@@ -189,7 +204,7 @@ struct grad_kernel {
                         break;
                     }
                 }
-                hana::for_each(hana::make_range(0_c, hana::llong_c<K>), [&](auto i) {
+                hana::for_each(hana::make_range(0_c, hana::llong_c<K - 1>), [&](auto i) {
                     xi[i * 3_c      ][n, row, col] = q[3_c * i];
                     xi[i * 3_c + 1_c][n, row, col] = q[3_c * i + 1_c];
                     xi[i * 3_c + 2_c][n, row, col] = q[3_c * i + 2_c];
@@ -278,22 +293,64 @@ struct div_kernel {
 
             if (m.n_images() > n) {
                 auto q  = hana::replicate<hana::tuple_tag>(0.0f, hana::size_c<K>);
-                auto v  = hana::replicate<hana::tuple_tag>(0.0f, hana::size_c<K>);
-                auto vk = 1.0f;
+                auto v  = q;
+
+                auto vk = 1.0f; // the last V component we are going to calculate
                 auto vi = 0.0f;
+
+                // the last xi component we are goint to compute
+                auto xi_k = hana::replicate<hana::tuple_tag>(0.0f, 3_c);
+                auto xi_k_n = 0.0f, xi_k_r = 0.0f, xi_k_c = 0.0f;
+                auto xi_i = xi_k;
+                auto xi_i_n = 0.0f, xi_i_r = 0.0f, xi_i_c = 0.0f;
+
                 STATIC_FOR(i)
                     auto div = 0.0f;
 
-                    if (0 < n)                div -= xi[i * 3_c][n - 1, row, col];
-                    if (m.n_images() - 1 > n) div += xi[i * 3_c][n, row, col];
+                    if constexpr (hana::llong_c<K> - 1_c > i) {
+                        xi_i = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...axis) {
+                            return hana::make_tuple(xi[i * 3_c + axis][n, row, col]...);
+                        });
+                        hana::for_each(hana::make_range(0_c, 3_c), [&](auto axis) {
+                            xi_k[axis] -= xi_i[axis];
+                        });
+                    } else {
+                        xi_i = xi_k;
+                    }
 
-                    if (m.row_begin(col) < row)   div -= xi[i * 3_c + 1_c][n, row - 1, col];
-                    if (m.row_end(col) - 1 > row) div += xi[i * 3_c + 1_c][n, row, col];
+                    if (0 < n) {
+                        if constexpr (hana::llong_c<K> - 1_c > i) {
+                            xi_i_n = xi[i * 3_c][n - 1, row, col];
+                            xi_k_n -= xi_i_n;
+                        } else {
+                            xi_i_n = xi_k_n;
+                        }
+                        div -= xi_i_n;
+                    }
+                    if (m.n_images() - 1 > n) div += xi_i[0_c];
 
-                    if (m.col_begin() < col && m.row_begin(col - 1) <= row && row < m.row_end(col - 1))
-                        div -= xi[i * 3_c + 2_c][n, row, col - 1];
+                    if (m.row_begin(col) < row) {
+                        if constexpr (hana::llong_c<K> - 1_c > i) {
+                            xi_i_r = xi[i * 3_c + 1_c][n, row - 1, col];
+                            xi_k_r -= xi_i_r;
+                        } else {
+                            xi_i_r = xi_k_r;
+                        }
+                        div -= xi_i_r;
+                    }
+                    if (m.row_end(col) - 1 > row) div += xi_i[1_c];
+
+                    if (m.col_begin() < col && m.row_begin(col - 1) <= row && row < m.row_end(col - 1)) {
+                        if constexpr (hana::llong_c<K> - 1_c > i) {
+                            xi_i_c = xi[i * 3_c + 2_c][n, row, col - 1];
+                            xi_k_c -= xi_i_c;
+                        } else {
+                            xi_i_c = xi_k_c;
+                        }
+                        div -= xi_i_c;
+                    }
                     if (m.col_end() - 1 > col && m.row_begin(col + 1) <= row && row < m.row_end(col + 1))
-                        div += xi[i * 3_c + 2_c][n, row, col];
+                        div += xi_i[2_c];
 
                     if constexpr (hana::llong_c<K> - 1_c> i) {
                         vi = V[i][n, row, col];
@@ -310,13 +367,13 @@ struct div_kernel {
                     V_bar[i][n, row, col] = 2 * q[i] - v[i];
                     V[i][n, row, col] = q[i];
                 });
-                Δq = cuda::std::sqrt(hana::fold(
+                Δq = hana::fold(
                     hana::make_range(0_c, hana::llong_c<K>)
                   , 0.0f
                   , [&](auto acc, auto k) {
                         return acc + sqr(q[k] - v[k]);
                     }
-                  ));
+                  );
             }
         }
         auto block_max = BlockReduce(temp).Reduce(Δq, cuda::maximum<>{});
@@ -411,10 +468,12 @@ void potts_min_partition(
     auto Ξ     = std::vector<DeviceField<float>>();
     auto V     = std::vector<DeviceField<float>>();
     auto V_bar = std::vector<DeviceField<float>>();
-    for (auto i = 0; K * d > i; ++i) {
+    // Ξ vectors sum up to zero, so we need just K - 1 components
+    for (auto i = 0; (K - 1) * d > i; ++i) {
         Ξ.emplace_back(mapping, ctx.stream(), ctx.mr());
         zero_view(Ξ.back().view());
     }
+    // V vectors sum up to 1, so we need just K - 1 components
     for (auto i = 0; K - 1 > i; ++i) {
         V    .emplace_back(mapping, ctx.stream(), ctx.mr());
         V_bar.emplace_back(mapping, ctx.stream(), ctx.mr());
@@ -471,20 +530,12 @@ void potts_min_partition(
     cuda::launch(ctx.stream(), config, update_kernel{}, g.view(), V_views, d_ci);
 }
 
-// template <std::size_t... Ks>
-// constexpr auto instantiate_potts(std::index_sequence<Ks...>)
-// {
-//     return std::tuple{&potts_min_partition<Ks + 2>...};
-// }
+template <std::size_t... Ks>
+constexpr auto instantiate_potts(std::index_sequence<Ks...>)
+{
+    return std::tuple{&potts_min_partition<Ks + 2>...};
+}
 
-// [[maybe_unused]] constinit auto potts_instances =
-//     instantiate_potts(std::make_index_sequence<max_k - 1>{});
+[[maybe_unused]] constinit auto potts_instances =
+    instantiate_potts(std::make_index_sequence<max_k - 1>{});
 
-template
-void potts_min_partition(
-    CudaContext &ctx
-  , DeviceField<float> &g
-  , std::array<float, 3> ci
-  , float 𝜆, float 𝜏1, float 𝜏2
-  , int iters
-  );
