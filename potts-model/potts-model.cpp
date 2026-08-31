@@ -144,8 +144,10 @@ int main(int argc, char *argv[]) try {
         for (auto c = 0; col_size > c; ++c) {
             for (auto r = 0; row_size > r; ++r) {
                 for (auto i = 0; m.n_images() > i; ++i) {
-                    if ((m.col_begin() <= c && c < m.col_end()) &&
-                        (m.row_begin(c) <= r && r < m.row_end(c)))
+                    auto col = c + m.col_begin();
+                    auto row = r + row_begin;
+                    if ((m.col_begin() <= col && col < m.col_end()) &&
+                        (m.row_begin(col) <= row && row < m.row_end(col)))
                     {
                         buffer.push_back(
                             uint8_t(
@@ -153,7 +155,7 @@ int main(int argc, char *argv[]) try {
                                     255
                                   , std::max(
                                         0
-                                      , int(std::round(255 * v[i, r, c]))
+                                      , int(std::round(255 * v[i, row, col]))
                                       )
                                   )
                               )
