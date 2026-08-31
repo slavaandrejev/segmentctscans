@@ -44,6 +44,9 @@ public:
     auto mapping()       { return d_mapping; }
     auto mapping() const { return d_mapping; }
 
+    auto data()       { return d_voxels.data(); };
+    auto data() const { return d_voxels.data(); };
+
 private:
     cuda::device_buffer<value_type> d_voxels;
     mapping_type::template device_mapping_tables<index_type> d_mapping_tables;
