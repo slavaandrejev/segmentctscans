@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) try {
     static auto constexpr K = 3;
 
     auto m             = original_img.view().mapping();
-    auto required_size = double(size_t{4} * (5 * K - 1) * m.required_span_size()) / (uint64_t(1) << 30);
+    auto required_size = double(size_t{4} * (5 * K - 4) * m.required_span_size()) / (uint64_t(1) << 30);
     fmt::print(fmt::fg(fmt::color::light_coral) | fmt::emphasis::bold,
                "Memory requirement for the CCP algorithm is {:.3f} GiB ({} labels)\n"
                , required_size, K);
