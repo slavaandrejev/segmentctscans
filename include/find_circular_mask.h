@@ -29,5 +29,15 @@ auto find_circular_mask(const cv::Mat &g) {
     auto radius = float{};
     cv::minEnclosingCircle(*largest, center, radius);
 
+#if 0
+    auto marked = cv::Mat{};
+    cv::cvtColor(img8, marked, cv::COLOR_GRAY2BGR);
+    cv::circle(marked, center, cvRound(radius),
+               cv::Scalar{0, 0, 255}, 1, cv::LINE_AA);
+    cv::drawMarker(marked, center, cv::Scalar{0, 255, 0},
+                   cv::MARKER_CROSS, 15, 2, cv::LINE_AA);
+    cv::imwrite("circular-mask.png", marked);
+#endif
+
     return std::tuple{cv::Point2d{center.x, center.y}, double(radius)};
 }
