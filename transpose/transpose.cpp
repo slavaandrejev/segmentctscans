@@ -1,11 +1,14 @@
 #include <filesystem>
 #include <string>
 
+#include <boost/hana/type.hpp>
 #include <boost/program_options.hpp>
 #include <boost/scope_exit.hpp>
 
 #include <fmt/printf.h>
 #include <fmt/color.h>
+
+#include <mdspan/mdspan.hpp>
 
 #include <opencv2/opencv.hpp>
 
@@ -19,8 +22,9 @@
 #include <find_circular_mask.h>
 #include <max_inscribed_circle.h>
 
-namespace fs = std::filesystem;
-namespace po = boost::program_options;
+namespace fs   = std::filesystem;
+namespace hana = boost::hana;
+namespace po   = boost::program_options;
 
 int main(int argc, char *argv[]) try {
     auto positional       = po::positional_options_description{};
@@ -101,15 +105,33 @@ int main(int argc, char *argv[]) try {
         return 1;
     }
 
-    const auto [width, height] = [&]() {
+    const auto [width, height, sample_format, bits_per_sample, samples_per_pixel] = [&]() {
         TIFFSetDirectory(tif.get(), 0);
         auto w = uint32_t{};
         auto h = uint32_t{};
         TIFFGetField(tif.get(), TIFFTAG_IMAGEWIDTH, &w);
         TIFFGetField(tif.get(), TIFFTAG_IMAGELENGTH, &h);
 
-        return std::tuple{w, h};
+        auto sample_format = uint16_t{};
+        TIFFGetField(tif.get(), TIFFTAG_SAMPLEFORMAT, &sample_format);
+
+        auto bits_per_sample = uint16_t{};
+        TIFFGetField(tif.get(), TIFFTAG_BITSPERSAMPLE, &bits_per_sample);
+
+        uint16_t samples_per_pixel;
+        TIFFGetField(tif.get(), TIFFTAG_SAMPLESPERPIXEL, &samples_per_pixel);
+
+        return std::tuple{w, h, sample_format, bits_per_sample, samples_per_pixel};
     }();
+
+    if ((32 != bits_per_sample || SAMPLEFORMAT_IEEEFP != sample_format || 1 != samples_per_pixel) &&
+        (16 != bits_per_sample || SAMPLEFORMAT_UINT   != sample_format || 1 != samples_per_pixel))
+    {
+        fmt::print(stderr,
+            "The input is expected to be either monochrome 32-bit floating point or "
+            "16-bit unsigned integer\n");
+        return 1;
+    }
 
     const auto num_images = TIFFNumberOfDirectories(tif.get());
 
@@ -134,74 +156,98 @@ int main(int argc, char *argv[]) try {
     }
     const auto outimgs = img_finish - img_start;
 
-    auto circles = std::vector<std::tuple<cv::Point2d, double>>{};
-    auto slice_storage = std::vector<uint16_t>(width * height);
-    auto slice_view = std::mdspan{slice_storage.data(), height, width};
-    for (auto n_dir = img_start; img_finish > n_dir; ++n_dir) {
-        TIFFSetDirectory(tif.get(), n_dir);
+    auto find_mask = [&](auto cpp_type, int type) -> std::tuple<cv::Point2d, double> {
+        using sample_type = decltype(+cpp_type)::type;
 
-        for (auto row = uint32_t{}; height > row; ++row) {
-            if (-1 == TIFFReadScanline(tif.get(), &slice_view[row, 0], row)) {
-                return 1;
+        auto circles       = std::vector<std::tuple<cv::Point2d, double>>{};
+        auto slice_storage = std::vector<sample_type>(width * height);
+        auto slice_view    = std::mdspan{slice_storage.data(), height, width};
+        for (auto n_dir = img_start; img_finish > n_dir; ++n_dir) {
+            TIFFSetDirectory(tif.get(), n_dir);
+
+            for (auto row = uint32_t{}; height > row; ++row) {
+                if (-1 == TIFFReadScanline(tif.get(), &slice_view[row, 0], row)) {
+                    throw std::runtime_error("Unexpected end of the TIFF file");
+                }
             }
+            auto g = cv::Mat(height, width, type, &slice_view[0, 0]);
+            circles.push_back(find_circular_mask(g));
         }
-        auto g = cv::Mat(height, width, CV_16UC1, &slice_view[0, 0]);
-        circles.push_back(find_circular_mask(g));
+
+        return max_inscribed_circle(circles);
+    };
+    auto radius = 0.0;
+    auto center = cv::Point2d{};
+
+    if (SAMPLEFORMAT_UINT == sample_format) {
+        std::tie(center, radius) = find_mask(hana::type_c<uint16_t>, CV_16UC1);
+    } else if (SAMPLEFORMAT_IEEEFP == sample_format) {
+        std::tie(center, radius) = find_mask(hana::type_c<float>, CV_32FC1);
     }
-    auto [center, radius] = max_inscribed_circle(circles);
-    fmt::print("mask radius = {}\n", radius);
-    fmt::print("mask location = {}, {}\n", center.x, center.y);
+    fmt::print("mask radius = {:.2f}\n", radius);
+    fmt::print("mask location = {:.2f}, {:.2f}\n", center.x, center.y);
+
 
     if (0 != vm.count("radius") && 1.0 < reduced_radius && reduced_radius < radius) {
         radius = reduced_radius;
     }
 
-    auto original_img = Field<uint16_t>(outimgs, width, height, center.x, center.y, radius);
+    auto transpose_and_save = [&](auto cpp_type) {
+        using sample_type = decltype(+cpp_type)::type;
 
-    auto constexpr B = uint32_t{128};
-    auto batch_storage = std::vector<uint16_t>(size_t{B} * height * width);
-    auto batch = std::mdspan{batch_storage.data(), B, height, width};
+        auto original_img = Field<sample_type>(outimgs, width, height, center.x, center.y, radius);
 
-    auto t = Timer{};
-    t.start();
-    for (auto n0 = img_start; img_finish > n0; n0 += B) {
-        auto nb = std::min<uint32_t>(B, img_finish - n0);
-        for (auto k = uint32_t{}; nb > k; ++k) {
-            TIFFSetDirectory(tif.get(), n0 + k);
-            for (auto row = uint32_t{}; height > row; ++row) {
-                if (-1 == TIFFReadScanline(tif.get(), &batch[k, row, 0], row)) {
-                    return 1;
+        auto constexpr B = uint32_t{128};
+        auto batch_storage = std::vector<sample_type>(size_t{B} * height * width);
+        auto batch = std::mdspan{batch_storage.data(), B, height, width};
+
+        auto t = Timer{};
+        t.start();
+        for (auto n0 = img_start; img_finish > n0; n0 += B) {
+            auto nb = std::min<uint32_t>(B, img_finish - n0);
+            for (auto k = uint32_t{}; nb > k; ++k) {
+                TIFFSetDirectory(tif.get(), n0 + k);
+                for (auto row = uint32_t{}; height > row; ++row) {
+                    if (-1 == TIFFReadScanline(tif.get(), &batch[k, row, 0], row)) {
+                        throw std::runtime_error("Unexpected end of the TIFF file");
+                    }
+                }
+            }
+            auto v = original_img.view();
+            auto m = v.mapping();
+            #pragma omp parallel for schedule(static, 1)
+            for (auto col = m.col_begin(); m.col_end() > col; ++col) {
+                for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
+                    for (auto k = uint32_t{}; nb > k; ++k) {
+                        v[n0 + k - img_start, row, col] = batch[k, row, col];
+                    }
                 }
             }
         }
-        auto v = original_img.view();
-        auto m = v.mapping();
-        #pragma omp parallel for schedule(static, 1)
-        for (auto col = m.col_begin(); m.col_end() > col; ++col) {
-            for (auto row = m.row_begin(col); m.row_end(col) > row; ++row) {
-                for (auto k = uint32_t{}; nb > k; ++k) {
-                    v[n0 + k - img_start, row, col] = batch[k, row, col];
-                }
-            }
-        }
+        t.stop("Transpose time");
+
+        static auto constexpr K = 3;
+
+        auto m             = original_img.view().mapping();
+        auto required_size = double(size_t{4} * (5 * K - 4) * m.required_span_size()) / (uint64_t(1) << 30);
+        fmt::print(fmt::fg(fmt::color::light_coral) | fmt::emphasis::bold,
+                   "Memory requirement for the CCP algorithm is {:.3f} GiB ({} labels)\n"
+                   , required_size, K);
+
+        auto buffer = std::vector<uint8_t>(sizeof(sample_type) * outimgs * width * height);
+        auto outit  = buffer.data();
+        auto oa     = io::BinOArchive{outit};
+
+        oa << original_img;
+
+        fwrite(buffer.data(), oa.size(), 1, out_file.get());
+    };
+
+    if (SAMPLEFORMAT_UINT == sample_format) {
+        transpose_and_save(hana::type_c<uint16_t>);
+    } else if (SAMPLEFORMAT_IEEEFP == sample_format) {
+        transpose_and_save(hana::type_c<float>);
     }
-    t.stop("Copy time");
-
-    static auto constexpr K = 3;
-
-    auto m             = original_img.view().mapping();
-    auto required_size = double(size_t{4} * (5 * K - 4) * m.required_span_size()) / (uint64_t(1) << 30);
-    fmt::print(fmt::fg(fmt::color::light_coral) | fmt::emphasis::bold,
-               "Memory requirement for the CCP algorithm is {:.3f} GiB ({} labels)\n"
-               , required_size, K);
-
-    auto buffer = std::vector<uint8_t>(size_t{2} * outimgs * width * height);
-    auto outit  = buffer.data();
-    auto oa     = io::BinOArchive{outit};
-
-    oa << original_img;
-
-    fwrite(buffer.data(), oa.size(), 1, out_file.get());
 }
 catch (std::exception &x) {
     fmt::print(stderr, "{}\n", x.what());
