@@ -16,8 +16,8 @@
 
 #include <io/binoarchive.h>
 
-#include "find_circular_mask.h"
-#include "max_inscribed_circle.h"
+#include <find_circular_mask.h>
+#include <max_inscribed_circle.h>
 
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
