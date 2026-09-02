@@ -126,10 +126,11 @@ struct grad_kernel {
                 auto vk = 1.0f, vk_n = 1.0f, vk_r = 1.0f, vk_c = 1.0f;
                 auto vi = 0.0f, vi_n = 0.0f, vi_r = 0.0f, vi_c = 0.0f;
 
-                auto xi_k = std::array<float, 3>{};
+                auto xi_k = hana::replicate<hana::tuple_tag>(0.0f, 3_c);
                 auto xi_i = xi_k;
 
-                auto q = std::array<float, K * 3>{};
+                auto q = hana::replicate<hana::tuple_tag>(0.0f, hana::llong_c<K> * 3_c);
+                auto qi1i2 = hana::replicate<hana::tuple_tag>(xi_k, hana::llong_c<K * (K - 1) / 2>);
                 cuda::static_for<K>([&](auto I) {
                     static constexpr auto i = hana::llong_c<decltype(I)::value>;
 
@@ -171,7 +172,7 @@ struct grad_kernel {
 
                     if constexpr (hana::llong_c<K> - 1_c > i) {
                         xi_i = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...axis) {
-                            return std::array<float, 3>{{xi[i * 3_c + axis][offset]...}};
+                            return hana::make_tuple(xi[i * 3_c + axis][offset]...);
                         });
                         hana::for_each(hana::make_range(0_c, 3_c), [&](auto axis) {
                             xi_k[axis] -= xi_i[axis];
@@ -189,7 +190,6 @@ struct grad_kernel {
                     q[3_c * i + 2_c] *= 𝜏2;
                     q[3_c * i + 2_c] += xi_i[2_c];
                 });
-                auto qi1i2 = std::array<std::array<float, 3>, K * (K - 1) / 2>{};
                 for (auto sweep = 0; 20 > sweep; ++sweep) {
                     auto max_𝛿 = std::numeric_limits<float>::lowest();
                     cuda::static_for<0, K - 1>([&](auto I1) {
@@ -199,20 +199,20 @@ struct grad_kernel {
 
                             auto constexpr qi1i2_idx = (2_c * hana::llong_c<K> - 1_c - i1) * i1 / 2_c + i2 - i1 - 1_c;
                             auto qh = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...n) {
-                                return std::array<float, 3>{{
+                                return hana::make_tuple(
                                     (q[3_c * i2 + n] - q[3_c * i1 + n] + qi1i2[qi1i2_idx][n])...
-                                }};
+                                );
                             });
                             auto l = cuda::std::sqrt(hana::fold(qh, 0.0f, [](auto acc, auto x) { return acc + x * x; }));
                             auto qhh = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...n) {
-                                return std::array<float, 3>{{
+                                return hana::make_tuple(
                                     (l > 1 ? ((l - 1.0f) * qh[n] / l) : 0.0f)...
-                                }};
+                                );
                             });
                             auto 𝛿 = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...n) {
-                                return std::array<float, 3>{{
+                                return hana::make_tuple(
                                     0.5f * (qhh[n] - qi1i2[qi1i2_idx][n])...
-                                }};
+                                );
                             });
                             auto 𝛿_norm = cuda::std::sqrt(hana::fold(𝛿, 0.0f, [](auto acc, auto x) { return acc + x * x; }));
                             max_𝛿 = cuda::std::max(𝛿_norm, max_𝛿);
