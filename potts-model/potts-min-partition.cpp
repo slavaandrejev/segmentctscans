@@ -12,8 +12,9 @@
 #include <cuda/algorithm>
 #include <cuda/atomic>
 #include <cuda/buffer>
-#include <cuda/launch>
 #include <cuda/cmath>
+#include <cuda/launch>
+#include <cuda/utility>
 
 #include <fmt/printf.h>
 
@@ -234,6 +235,48 @@ struct grad_kernel {
 };
 
 struct div_kernel {
+    // taken from https://bertdobbelaere.github.io/sorting_networks.html
+    static constexpr auto sorting_networks = hana::make_map(
+        hana::make_pair(
+            2_c
+          , hana::make_tuple(
+                hana::make_pair(0_c, 1_c)
+              )
+          )
+      , hana::make_pair(
+            3_c
+          , hana::make_tuple(
+                hana::make_pair(0_c, 2_c)
+              , hana::make_pair(0_c, 1_c)
+              , hana::make_pair(1_c, 2_c)
+              )
+          )
+      , hana::make_pair(
+            4_c
+          , hana::make_tuple(
+                hana::make_pair(0_c, 2_c)
+              , hana::make_pair(1_c, 3_c)
+              , hana::make_pair(0_c, 1_c)
+              , hana::make_pair(2_c, 3_c)
+              , hana::make_pair(1_c, 2_c)
+              )
+          )
+      , hana::make_pair(
+            5_c
+          , hana::make_tuple(
+                hana::make_pair(0_c, 3_c)
+              , hana::make_pair(1_c, 4_c)
+              , hana::make_pair(0_c, 2_c)
+              , hana::make_pair(1_c, 3_c)
+              , hana::make_pair(0_c, 1_c)
+              , hana::make_pair(2_c, 4_c)
+              , hana::make_pair(1_c, 2_c)
+              , hana::make_pair(3_c, 4_c)
+              , hana::make_pair(2_c, 3_c)
+              )
+          )
+      );
+
     template <typename ...Xn>
     static __forceinline__
     __device__ auto project_simplex(hana::tuple<Xn...> q)
@@ -242,23 +285,30 @@ struct div_kernel {
 
         auto u = q;
 
-        // insertion sort
-        hana::for_each(hana::make_range(1_c, hana::llong_c<K>), [&](auto i) {
-            auto key = u[i];
-            auto done = false;
-            hana::for_each(hana::make_range(0_c, i), [&](auto jj) {
-                auto j = i - 1_c - jj;
-                if (!done) {
-                    if (u[j] < key) {
-                        u[j + 1_c] = u[j];
-                    } else {
-                        done = true;
-                        u[j + 1_c] = key;
-                    }
-                }
+        constexpr auto key = hana::llong_c<K>;
+        constexpr auto has_network = hana::contains(sorting_networks, key);
+
+        auto ce = [&](auto a, auto b) {
+            const float x = u[a];
+            const float y = u[b];
+
+            u[a] = fmaxf(x, y);
+            u[b] = fminf(x, y);
+        };
+
+        if constexpr (has_network) {
+            constexpr auto sort_nw = hana::at_key(sorting_networks, key);
+            hana::for_each(sort_nw, [&](auto p) {
+                ce(hana::first(p), hana::second(p));
             });
-            if (!done) { u[0_c] = key; }
-        });
+        } else {
+            hana::for_each(hana::make_range(1_c, hana::llong_c<K>), [&](auto i) {
+                hana::for_each(hana::make_range(0_c, i), [&](auto jj) {
+                    constexpr auto j = i - 1_c - jj;
+                    ce(j, j + 1_c);
+                });
+            });
+        }
 
         auto sum   = 0.0f;
         auto 𝜌_sum = 0.0f;
@@ -570,20 +620,20 @@ void potts_min_partition(
     cuda::launch(ctx.stream(), config, update_kernel{}, mapping, g.data(), V_ptrs, d_ci);
 }
 
-template <std::size_t... Ks>
-constexpr auto instantiate_potts(std::index_sequence<Ks...>)
-{
-    return std::tuple{&potts_min_partition<Ks + 2>...};
-}
+// template <std::size_t... Ks>
+// constexpr auto instantiate_potts(std::index_sequence<Ks...>)
+// {
+//     return std::tuple{&potts_min_partition<Ks + 2>...};
+// }
 
-[[maybe_unused]] constinit auto potts_instances =
-    instantiate_potts(std::make_index_sequence<max_k - 1>{});
+// [[maybe_unused]] constinit auto potts_instances =
+//     instantiate_potts(std::make_index_sequence<max_k - 1>{});
 
-// template
-// void potts_min_partition(
-//     CudaContext &ctx
-//   , DeviceField<float> &g
-//   , std::array<float, 3> ci
-//   , float 𝜆, float 𝜏1, float 𝜏2
-//   , int iters
-//   );
+template
+void potts_min_partition(
+    CudaContext &ctx
+  , DeviceField<float> &g
+  , std::array<float, 3> ci
+  , float 𝜆, float 𝜏1, float 𝜏2
+  , int iters
+  );
