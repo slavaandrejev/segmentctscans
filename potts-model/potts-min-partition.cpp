@@ -4,9 +4,22 @@
 #include <memory>
 #include <vector>
 
-#include <boost/hana.hpp>
-#include <boost/hana/tuple.hpp>
+#include <boost/hana/at_key.hpp>
+#include <boost/hana/div.hpp>
 #include <boost/hana/ext/std/array.hpp>
+#include <boost/hana/ext/std/integral_constant.hpp>
+#include <boost/hana/fold.hpp>
+#include <boost/hana/for_each.hpp>
+#include <boost/hana/greater.hpp>
+#include <boost/hana/integral_constant.hpp>
+#include <boost/hana/map.hpp>
+#include <boost/hana/minus.hpp>
+#include <boost/hana/mult.hpp>
+#include <boost/hana/plus.hpp>
+#include <boost/hana/range.hpp>
+#include <boost/hana/replicate.hpp>
+#include <boost/hana/tuple.hpp>
+#include <boost/hana/unpack.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/algorithm>
@@ -36,21 +49,6 @@ using namespace hana::literals;
 
 static constexpr auto threads_per_block = 256;
 static constexpr auto max_k = 6;
-
-template <long long Begin, long long End>
-constexpr auto make_llong_range() {
-    return []<long long... I>(std::integer_sequence<long long, I...>) {
-        return std::integer_sequence<long long, (I + Begin)...>{};
-    }(std::make_integer_sequence<long long, End - Begin>{});
-}
-
-#define STATIC_FOR(var)                                                         \
-    [&]<long long... var##_Is>(std::integer_sequence<long long, var##_Is...>) { \
-        ([&](auto var) {
-
-#define STATIC_FOR_END(var, Begin, End)   \
-        }(hana::llong_c<var##_Is>), ...); \
-    }(make_llong_range<Begin, End>())
 
 struct init_v_kernel {
     template <typename Config, typename ...Xn, typename Extents>
@@ -132,7 +130,9 @@ struct grad_kernel {
                 auto xi_i = xi_k;
 
                 auto q = std::array<float, K * 3>{};
-                STATIC_FOR(i)
+                cuda::static_for<K>([&](auto I) {
+                    static constexpr auto i = hana::llong_c<decltype(I)::value>;
+
                     if constexpr (hana::llong_c<K> - 1_c > i) {
                         vi = V_bar[i][offset];
                         vk -= vi;
@@ -188,12 +188,15 @@ struct grad_kernel {
 
                     q[3_c * i + 2_c] *= 𝜏2;
                     q[3_c * i + 2_c] += xi_i[2_c];
-                STATIC_FOR_END(i, 0, K);
+                });
                 auto qi1i2 = std::array<std::array<float, 3>, K * (K - 1) / 2>{};
                 for (auto sweep = 0; 20 > sweep; ++sweep) {
                     auto max_𝛿 = std::numeric_limits<float>::lowest();
-                    STATIC_FOR(i1)
-                        STATIC_FOR(i2)
+                    cuda::static_for<0, K - 1>([&](auto I1) {
+                        static constexpr auto i1 = hana::llong_c<decltype(I1)::value>;
+                        cuda::static_for<I1 + 1, K>([&](auto I2) {
+                            static constexpr auto i2 = hana::llong_c<decltype(I2)::value>;
+
                             auto constexpr qi1i2_idx = (2_c * hana::llong_c<K> - 1_c - i1) * i1 / 2_c + i2 - i1 - 1_c;
                             auto qh = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...n) {
                                 return std::array<float, 3>{{
@@ -218,8 +221,8 @@ struct grad_kernel {
                                 q[3_c * i2 + n] -= 𝛿[n];
                             });
                             qi1i2[qi1i2_idx] = qhh;
-                        STATIC_FOR_END(i2, hana::value(i1 + 1_c), K);
-                    STATIC_FOR_END(i1, 0, K - 1);
+                        });
+                    });
                     if (1e-6 > max_𝛿) {
                         break;
                     }
@@ -296,6 +299,7 @@ struct div_kernel {
             u[b] = fminf(x, y);
         };
 
+        // use sorting networks for a few known K, fallback to insertion sort
         if constexpr (has_network) {
             constexpr auto sort_nw = hana::at_key(sorting_networks, key);
             hana::for_each(sort_nw, [&](auto p) {
@@ -389,7 +393,9 @@ struct div_kernel {
                 auto xi_i = xi_k;
                 auto xi_i_n = 0.0f, xi_i_r = 0.0f, xi_i_c = 0.0f;
 
-                STATIC_FOR(i)
+                cuda::static_for<K>([&](auto I) {
+                    static constexpr auto i = hana::llong_c<decltype(I)::value>;
+
                     auto div = 0.0f;
 
                     if constexpr (hana::llong_c<K> - 1_c > i) {
@@ -446,7 +452,7 @@ struct div_kernel {
 
                     v[i] = vi;
                     q[i] = vi + 𝜏1 * (div - 𝜆 * sqr(g[offset] - ci[i]));
-                STATIC_FOR_END(i, 0, K);
+                });
                 q = project_simplex(q);
                 hana::for_each(hana::make_range(0_c, hana::llong_c<K - 1>), [&](auto i) {
                     V_bar[i][offset] = 2 * q[i] - v[i];
@@ -620,20 +626,11 @@ void potts_min_partition(
     cuda::launch(ctx.stream(), config, update_kernel{}, mapping, g.data(), V_ptrs, d_ci);
 }
 
-// template <std::size_t... Ks>
-// constexpr auto instantiate_potts(std::index_sequence<Ks...>)
-// {
-//     return std::tuple{&potts_min_partition<Ks + 2>...};
-// }
+template <std::size_t... Ks>
+constexpr auto instantiate_potts(std::index_sequence<Ks...>)
+{
+    return std::tuple{&potts_min_partition<Ks + 2>...};
+}
 
-// [[maybe_unused]] constinit auto potts_instances =
-//     instantiate_potts(std::make_index_sequence<max_k - 1>{});
-
-template
-void potts_min_partition(
-    CudaContext &ctx
-  , DeviceField<float> &g
-  , std::array<float, 3> ci
-  , float 𝜆, float 𝜏1, float 𝜏2
-  , int iters
-  );
+[[maybe_unused]] constinit auto potts_instances =
+    instantiate_potts(std::make_index_sequence<max_k - 1>{});
