@@ -14,7 +14,8 @@ potts_min_part_lib = static_library(
   , 'potts-min-partition.cpp'
   , include_directories: project_inc
   , dependencies: [
-        cuda_dep
+        boost_dep
+      , cuda_dep
       , cccl_dep
       , eigen_dep
       ]
