@@ -4,6 +4,8 @@
 
 #include <cuda-context.h>
 
+static constexpr auto max_potts_labels = 6;
+
 template <size_t K>
 void potts_min_partition(
     CudaContext &ctx

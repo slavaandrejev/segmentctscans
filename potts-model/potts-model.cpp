@@ -4,7 +4,9 @@
 #include <filesystem>
 #include <limits>
 
+#include <boost/hana.hpp>
 #include <boost/iostreams/device/mapped_file.hpp>
+#include <boost/parser/parser.hpp>
 #include <boost/program_options.hpp>
 
 #include <fmt/printf.h>
@@ -19,8 +21,11 @@
 
 #include "potts-min-partition.h"
 
-namespace fs = std::filesystem;
-namespace po = boost::program_options;
+namespace fs   = std::filesystem;
+namespace hana = boost::hana;
+namespace po   = boost::program_options;
+
+using namespace hana::literals;
 
 extern template void Field<uint16_t>::load(io::BinIArchive<const char*>&, unsigned);
 extern template void Field<float>::load(io::BinIArchive<const char*>&, unsigned);
@@ -42,6 +47,35 @@ void write_png(std::mdspan<ElementType, Extents, layout_cylinder> img, uint32_t 
     cv::imwrite(fmt::format("slice-{} (𝜆 = {:07.3f}).png", col, 𝜆), vis);
 }
 
+struct LabelsArray {
+    std::vector<float> data;
+};
+
+void validate(boost::any &v,
+              const std::vector<std::string> &values,
+              LabelsArray *targetType, int)
+{
+    using namespace boost::program_options;
+    namespace bp = boost::parser;
+
+    validators::check_first_occurrence(v);
+    const auto& s = validators::get_single_string(values);
+    auto data = std::vector<float>{};
+    auto it  = s.begin();
+    auto end = s.end();
+    auto result = !bp::prefix_parse(
+        it, end
+      , '{' >> (bp::float_ % ',') >> '}'
+      , bp::ws
+      , data
+      );
+    if (!result || data.size() < 2 || data.size() > max_potts_labels) {
+        throw validation_error(validation_error::invalid_option_value);
+    }
+    v = boost::any(LabelsArray{.data = data});
+}
+
+
 int main(int argc, char *argv[]) try {
     auto positional       = po::positional_options_description{};
     auto cmd_line_options = po::options_description{};
@@ -50,9 +84,14 @@ int main(int argc, char *argv[]) try {
     auto in_file_name     = std::string{};
     auto rawout_file_name = std::string{};
 
+    auto labels = LabelsArray{};
+    auto 𝜆      = 30.0f;
+
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "input file")
         ("rawout", po::value<std::string>(&rawout_file_name), "denoised output file")
+        ("labels", po::value(&labels)->multitoken()->required(), "labels")
+        ("lambda", po::value(&𝜆)->required(), "Segmentation algorithm parameter")
       ;
     positional.add("input", 1);
 
@@ -102,19 +141,33 @@ int main(int argc, char *argv[]) try {
         auto d_img = upload(*cuda_context, img.view());
     t.stop("Upload to GPU time");
 
-    const auto 𝜆 = 30.0f;
-
     auto 𝜏  = 0.99f * std::sqrt(1.0f / 12.0f);
-    auto ci = std::array<float, 3>{0.155431f, 0.22989f, 0.451221f};
-    // auto ci = std::array<float, 3>{0.2f, 0.451221f, 0.580403f};
-    t.start();
-        potts_min_partition(
-            *cuda_context
-          , *d_img
-          , ci
-          , 𝜆, 𝜏, 𝜏
-          , 100);
-    t.stop("Find intensity range time");
+    hana::for_each(hana::make_range(2_c, hana::llong_c<max_potts_labels + 1>), [&](auto i) {
+        if (labels.data.size() == hana::value(i)) {
+            auto ci = hana::unpack(hana::make_range(0_c, i), [&](auto ...j) {
+                return std::array<float, i>{{labels.data[j]...}};
+            });
+            auto lo = img.lo();
+            auto hi = img.hi();
+            fmt::print("labels: ");
+            for (auto j = 0; ci.size() > j; ++j) {
+                if (0 != j) {
+                    fmt::print(", ");
+                }
+                auto c = (ci[j] - lo) / (hi - lo);
+                fmt::print("{}", std::round(255 * c));
+            }
+            fmt::print("\n");
+            t.start();
+                potts_min_partition(
+                    *cuda_context
+                  , *d_img
+                  , ci
+                  , 𝜆, 𝜏, 𝜏
+                  , 100);
+            t.stop("Find intensity range time");
+        }
+    });
 
     t.start();
         download(*cuda_context, *d_img, img.view());

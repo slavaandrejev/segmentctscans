@@ -51,7 +51,6 @@ namespace rv   = rs::views;
 using namespace hana::literals;
 
 static constexpr auto threads_per_block = 256;
-static constexpr auto max_k = 6;
 
 struct init_v_kernel {
     template <typename Config, typename ...Xn, typename Extents>
@@ -636,4 +635,4 @@ constexpr auto instantiate_potts(std::index_sequence<Ks...>)
 }
 
 [[maybe_unused]] constinit auto potts_instances =
-    instantiate_potts(std::make_index_sequence<max_k - 1>{});
+    instantiate_potts(std::make_index_sequence<max_potts_labels - 1>{});
