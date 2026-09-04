@@ -85,6 +85,9 @@ int main(int argc, char *argv[]) try {
         ia >> denoised_img;
     t.stop("Read time");
 
+    auto lo = denoised_img.lo();
+    auto hi = denoised_img.hi();
+
     auto hi_data_thr = 0.0f;
     {
         auto cuda_context = make_context();
@@ -150,7 +153,7 @@ int main(int argc, char *argv[]) try {
     auto clusters = clusters_t{indices.size(), 1};
     auto dist     = VectorXf{init_peaks.size()};
     for (auto i = size_t{}; indices.size() > i; ++i) {
-        samples[i] = linear_data[indices[i]];
+        samples[i] = lo + (hi - lo) * linear_data[indices[i]];
         for (auto c = size_t{}; init_peaks.size() > c; ++c) {
             dist[c] = std::abs(centers[c] - samples[i]);
         }
@@ -217,7 +220,7 @@ int main(int argc, char *argv[]) try {
     for (auto i = size_t{}; indices.size() > i; ++i) {
         const auto idx = indices[i];
         const auto lbl = new_clust[i];
-        const auto val = double(linear_data[idx]);
+        const auto val = lo + (hi - lo) * double(linear_data[idx]);
 
         auto 𝛿 = val - n𝜇[lbl];
         n𝜇[lbl] += 𝛿 / (ncount[lbl] + 1);
