@@ -141,18 +141,17 @@ int main(int argc, char *argv[]) try {
     auto 𝜏  = 0.99f * std::sqrt(1.0f / 12.0f);
     hana::for_each(hana::make_range(2_c, hana::llong_c<max_potts_labels + 1>), [&](auto i) {
         if (labels.data.size() == hana::value(i)) {
-            auto ci = hana::unpack(hana::make_range(0_c, i), [&](auto ...j) {
-                return std::array<float, i>{{labels.data[j]...}};
-            });
             auto lo = img.lo();
             auto hi = img.hi();
+            auto ci = hana::unpack(hana::make_range(0_c, i), [&](auto ...j) {
+                return std::array<float, i>{{(labels.data[j] - lo) / (hi - lo)...}};
+            });
             fmt::print("labels: ");
             for (auto j = 0; ci.size() > j; ++j) {
                 if (0 != j) {
                     fmt::print(", ");
                 }
-                auto c = (ci[j] - lo) / (hi - lo);
-                fmt::print("{}", std::round(255 * c));
+                fmt::print("{}", std::round(255 * ci[j]));
             }
             fmt::print("\n");
             auto [available, total] = device_memory(*cuda_context);
