@@ -22,12 +22,15 @@
 #include <boost/hana/unpack.hpp>
 
 #include <cub/block/block_reduce.cuh>
+
 #include <cuda/algorithm>
 #include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/launch>
 #include <cuda/utility>
+
+#include <cuda/std/array>
 
 #include <fmt/printf.h>
 
@@ -57,8 +60,8 @@ struct init_v_kernel {
         Config config
       , layout_cylinder::mapping<Extents> m
       , const float *g
-      , std::array<float *, sizeof...(Xn) - 1> V
-      , std::array<float *, sizeof...(Xn) - 1> V_bar
+      , cuda::std::array<float *, sizeof...(Xn) - 1> V
+      , cuda::std::array<float *, sizeof...(Xn) - 1> V_bar
       , const hana::tuple<Xn...> ci
       )
     {
@@ -92,8 +95,8 @@ struct grad_kernel {
     void operator()(
         Config config
       , layout_cylinder::mapping<Extents> m
-      , std::array<float *, 3 * Km1> xi
-      , std::array<float *, Km1> V_bar
+      , cuda::std::array<float *, 3 * Km1> xi
+      , cuda::std::array<float *, Km1> V_bar
       , float 𝜏2
       )
     {
@@ -343,9 +346,9 @@ struct div_kernel {
         Config config
       , layout_cylinder::mapping<Extents> m
       , const float *g
-      , std::array<float *, 3 * (sizeof...(Xn) - 1)> xi
-      , std::array<float *, sizeof...(Xn) - 1> V
-      , std::array<float *, sizeof...(Xn) - 1> V_bar
+      , cuda::std::array<float *, 3 * (sizeof...(Xn) - 1)> xi
+      , cuda::std::array<float *, sizeof...(Xn) - 1> V
+      , cuda::std::array<float *, sizeof...(Xn) - 1> V_bar
       , const hana::tuple<Xn...> ci
       , float 𝜆, float 𝜏1
       , cuda::std::span<float> max_delta_q
@@ -482,7 +485,7 @@ struct update_kernel {
         Config config
       , layout_cylinder::mapping<Extents> m
       , float *g
-      , std::array<float *, K> V
+      , cuda::std::array<float *, K> V
       , const cuda::std::span<float> ci
       )
     {
@@ -578,13 +581,13 @@ void potts_min_partition(
     }
 
     auto Ξ_ptrs = hana::unpack(Ξ, [](auto&... buffer) {
-        return std::array<float*, d * (K - 1)>{{buffer.data()...}};
+        return cuda::std::array<float*, d * (K - 1)>{{buffer.data()...}};
     });
     auto V_ptrs = hana::unpack(V, [](auto&... buffer) {
-        return std::array<float*, K - 1>{{buffer.data()...}};
+        return cuda::std::array<float*, K - 1>{{buffer.data()...}};
     });
     auto V_bar_ptrs = hana::unpack(V_bar, [](auto&... buffer) {
-        return std::array<float*, K - 1>{{buffer.data()...}};
+        return cuda::std::array<float*, K - 1>{{buffer.data()...}};
     });
 
 
