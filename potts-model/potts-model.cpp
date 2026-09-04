@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) try {
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "input file")
         ("rawout", po::value<std::string>(&rawout_file_name), "denoised output file")
-        ("labels", po::value(&labels)->multitoken()->required(), "labels")
+        ("labels", po::value(&labels)->required(), "labels")
         ("lambda", po::value(&𝜆)->required(), "Segmentation algorithm parameter")
       ;
     positional.add("input", 1);
