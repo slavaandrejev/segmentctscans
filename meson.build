@@ -49,7 +49,6 @@ cuda_cpp_args = [
   ]
 cuda_overr_options = {'cpp_std': 'gnu++23'}
 
-subdir('totalvarmin2d')
 subdir('cuda-context')
 subdir('min_max')
 subdir('calc_hist')
