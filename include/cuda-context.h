@@ -27,3 +27,9 @@ upload(CudaContext &,
 template <typename ElementType, typename Extents>
 void download(CudaContext &, const DeviceField<ElementType> &,
               std::mdspan<ElementType, Extents, layout_cylinder> out);
+
+struct device_memory_info {
+    std::size_t available;
+    std::size_t total;
+};
+device_memory_info device_memory(CudaContext const& ctx);

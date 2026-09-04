@@ -19,6 +19,28 @@ cuda_context_ptr make_context() {
     return cuda_context_ptr{new CudaContext{}};
 }
 
+device_memory_info device_memory(CudaContext const &ctx)
+{
+    auto free  = std::size_t{};
+    auto total = std::size_t{};
+
+    if (auto status = cudaMemGetInfo(&free, &total); cudaSuccess != status)
+    {
+        throw cuda::cuda_error{status, "cudaMemGetInfo failed"};
+    }
+
+    auto pool = ctx.mr();
+    auto reserved =
+        pool.attribute(cuda::memory_pool_attributes::reserved_mem_current);
+    auto used =
+        pool.attribute(cuda::memory_pool_attributes::used_mem_current);
+
+    return device_memory_info{
+        .available = free + (reserved - used)
+      , .total     = total
+      };
+}
+
 template <typename ElementType>
 void DeviceFieldDeleter<ElementType>::operator()(DeviceField<ElementType> *field) noexcept {
     delete field;

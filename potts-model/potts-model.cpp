@@ -9,6 +9,7 @@
 #include <boost/parser/parser.hpp>
 #include <boost/program_options.hpp>
 
+#include <fmt/color.h>
 #include <fmt/printf.h>
 
 #include <opencv2/opencv.hpp>
@@ -63,7 +64,7 @@ void validate(boost::any &v,
     auto data = std::vector<float>{};
     auto it  = s.begin();
     auto end = s.end();
-    auto result = !bp::prefix_parse(
+    auto result = bp::prefix_parse(
         it, end
       , '{' >> (bp::float_ % ',') >> '}'
       , bp::ws
@@ -137,10 +138,6 @@ int main(int argc, char *argv[]) try {
 
     auto cuda_context = make_context();
 
-    t.start();
-        auto d_img = upload(*cuda_context, img.view());
-    t.stop("Upload to GPU time");
-
     auto 𝜏  = 0.99f * std::sqrt(1.0f / 12.0f);
     hana::for_each(hana::make_range(2_c, hana::llong_c<max_potts_labels + 1>), [&](auto i) {
         if (labels.data.size() == hana::value(i)) {
@@ -158,6 +155,24 @@ int main(int argc, char *argv[]) try {
                 fmt::print("{}", std::round(255 * c));
             }
             fmt::print("\n");
+            auto [available, total] = device_memory(*cuda_context);
+            auto required_mem_size = size_t{4} * (5 * i - 4) * img.view().mapping().required_span_size();
+            if (available < required_mem_size) {
+                fmt::print(
+                    fmt::fg(fmt::color::light_coral) | fmt::emphasis::bold
+                  , "Memory requirement for the segmentation algorithm is {:.3f} GiB ({} labels)\n"
+                    "Available memory: {:.3f} GiB out of {:.3f} GiB\n"
+                  , double(required_mem_size) / (uint64_t(1) << 30)
+                  , hana::value(i)
+                  , double(available) / (uint64_t(1) << 30)
+                  , double(total) / (uint64_t(1) << 30)
+                  );
+            }
+
+            t.start();
+                auto d_img = upload(*cuda_context, img.view());
+            t.stop("Upload to GPU time");
+
             t.start();
                 potts_min_partition(
                     *cuda_context
@@ -166,13 +181,13 @@ int main(int argc, char *argv[]) try {
                   , 𝜆, 𝜏, 𝜏
                   , 100);
             t.stop("Find intensity range time");
+
+            t.start();
+                download(*cuda_context, *d_img, img.view());
+            t.stop("Download from GPU time");
+            d_img.reset();
         }
     });
-
-    t.start();
-        download(*cuda_context, *d_img, img.view());
-    t.stop("Download from GPU time");
-    d_img.reset();
 
     write_png(img.view(), 480, 𝜆);
 
