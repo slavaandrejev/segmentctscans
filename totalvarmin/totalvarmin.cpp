@@ -21,8 +21,6 @@
 #include <field.h>
 #include <timeop.h>
 
-#include "find_intensity_range.h"
-#include "convert_to_fp.h"
 #include "chambolle.h"
 
 namespace bc = boost::math::double_constants;
@@ -57,15 +55,13 @@ int main(int argc, char *argv[]) try {
     auto vm               = po::variables_map{};
 
     auto in_file_name       = std::string{};
-    auto out_file_name      = std::string{};
     auto denoised_file_name = std::string{};
 
-    auto 𝜆 = 0.05f;
+    auto 𝜆 = 0.06f;
 
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "input file")
-        ("output,o", po::value<std::string>(&out_file_name), "output file")
-        ("denoised", po::value<std::string>(&denoised_file_name), "denoised output file")
+        ("output,o", po::value<std::string>(&denoised_file_name), "denoised output file")
         ("lambda", po::value(&𝜆), "Chambolle's algorithm parameter")
       ;
     positional.add("input", 1);
@@ -89,12 +85,6 @@ int main(int argc, char *argv[]) try {
         }
 
         if (0 != vm.count("output")) {
-            out_file.reset(fopen(out_file_name.c_str(), "w"));
-            if (!out_file) {
-                throw std::system_error(errno, std::system_category());
-            }
-        }
-        if (0 != vm.count("denoised")) {
             denoised_file.reset(fopen(denoised_file_name.c_str(), "w"));
             if (!denoised_file) {
                 throw std::system_error(errno, std::system_category());
@@ -112,63 +102,38 @@ int main(int argc, char *argv[]) try {
 
     auto t = Timer{};
 
-    auto original_img = Field<uint16_t>{};
+    auto img = Field<float>{};
     t.start();
-        ia >> original_img;
+        ia >> img;
     t.stop("Read time");
+
+    auto lo = img.lo();
+    auto hi = img.hi();
 
     auto cuda_context = make_context();
 
     t.start();
-        auto d_original_img = upload(*cuda_context, original_img.view());
+        auto d_img = upload(*cuda_context, img.view());
     t.stop("Upload to GPU time");
-
-    t.start();
-        auto [lo, hi] = find_intensity_range(*cuda_context, *d_original_img, 0.001);
-    t.stop("Find intensity range time");
-    fmt::print("used lo = {}\n", lo); // 5399
-    fmt::print("used hi = {}\n", hi); // 12524
-
-    t.start();
-        auto d_img = convert_to_fp(*cuda_context, *d_original_img, lo, hi);
-    t.stop("Convert to FP32 time");
-    d_original_img.reset();
-
-    auto img = Field<float>{original_img.view().mapping()};
-    img.lo(lo);
-    img.hi(hi);
-    t.start();
-        download(*cuda_context, *d_img, img.view());
-    t.stop("Download from GPU time");
-
-    if (out_file) {
-        auto m      = img.view().mapping();
-        auto buffer = std::vector<uint8_t>(size_t{4} * m.required_span_size() * 2);
-        auto outit  = buffer.data();
-        auto oa     = io::BinOArchive{outit};
-
-        t.start();
-            oa << img;
-        t.stop("Writing time");
-
-        fwrite(buffer.data(), oa.size(), 1, out_file.get());
-    }
 
     static auto constexpr col = 481;
 
     write_png(img.view(), col, 0.0f);
 
-    const auto nbins = 500;
+    const auto nbins = 1024;
+    auto 𝛿 = 1.0 / (hi - lo);
+    𝛿 = sqr(𝛿) < 0.5 / nbins ? 𝛿 : 0.0;
     t.start();
-        auto hist = calc_hist(*cuda_context, *d_img, 1.0 / (hi - lo), nbins);
+        auto [hist, min, max] = calc_hist(*cuda_context, *d_img, nbins, 𝛿);
     t.stop("Histogram time");
+    const auto bin_width = (double(hi) - double(lo)) / nbins;
     auto f = std::unique_ptr<FILE, decltype(&fclose)>{
         fopen("original-hist.txt", "wt")
       , &fclose
       };
-    fmt::print(f.get(), "intensity ch0\n");
+    fmt::print(f.get(), "brightness ch0\n");
     for (auto i = size_t{1}; hist.size() - 1 > i; ++i) {
-        fmt::print(f.get(), "{} {}\n", (i + 0.5) / nbins, hist[i]);
+        fmt::print(f.get(), "{} {}\n", (i + 0.5) * bin_width + lo, hist[i] * (max - min) / (hi - lo));
     }
 
     t.start();
@@ -188,14 +153,14 @@ int main(int argc, char *argv[]) try {
         fwrite(buffer.data(), oa.size(), 1, denoised_file.get());
     }
 
-    hist = calc_hist(*cuda_context, *d_img, 1.0 / (hi - lo), nbins);
+    hist = calc_hist(*cuda_context, *d_img, min, max, nbins, 𝛿);
     f = std::unique_ptr<FILE, decltype(&fclose)>{
         fopen(fmt::format("hist (𝜆 = {:.3f}).txt", 𝜆).c_str(), "wt")
       , &fclose
       };
-    fmt::print(f.get(), "intensity ch0\n");
+    fmt::print(f.get(), "brightness ch0\n");
     for (auto i = size_t{1}; hist.size() - 1 > i; ++i) {
-        fmt::print(f.get(), "{} {}\n", (i + 0.5) / nbins, hist[i]);
+        fmt::print(f.get(), "{} {}\n", (i + 0.5) * bin_width + lo, hist[i] * (max - min) / (hi - lo));
     }
 
     write_png(img.view(), col, 𝜆);

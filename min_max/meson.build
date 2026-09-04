@@ -1,7 +1,7 @@
 # takes too long in debug mode, always opimize this
-calc_hist_lib = static_library(
-    'calc_hist'
-  , 'calc_hist.cpp'
+min_max_lib = static_library(
+    'min_max'
+  , 'min_max.cpp'
   , include_directories: project_inc
   , dependencies: [
         cuda_dep
@@ -14,10 +14,9 @@ calc_hist_lib = static_library(
       } + cuda_overr_options
   )
 
-calc_hist_dep = declare_dependency(
+min_max_dep = declare_dependency(
     include_directories: project_inc
   , link_whole: [
-        calc_hist_lib
+        min_max_lib
       ]
-  , dependencies: [min_max_dep]
   )

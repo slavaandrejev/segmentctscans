@@ -17,6 +17,15 @@ auto find_circular_mask(const cv::Mat &g) {
     auto bin = cv::Mat{};
     cv::threshold(img8, bin, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
+    const auto white_border =
+        cv::countNonZero(bin.row(0)) +
+        cv::countNonZero(bin.row(bin.rows - 1)) +
+        cv::countNonZero(bin.col(0)) +
+        cv::countNonZero(bin.col(bin.cols - 1));
+
+    if (white_border > bin.rows + bin.cols)
+        cv::bitwise_not(bin, bin);
+
     auto contours = std::vector<std::vector<cv::Point>>{};
     cv::findContours(bin, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     auto largest = rs::max_element(

@@ -16,11 +16,20 @@ using mu16_span = std::mdspan<
   , std::dextents<uint32_t, 3>
   , layout_cylinder
   >;
+using cmu16_span = std::mdspan<
+    const uint16_t
+  , mu16_span::extents_type
+  , mu16_span::layout_type
+  >;
 using mf32_span = std::mdspan<
     float
   , std::dextents<uint32_t, 3>
   , layout_cylinder
   >;
+using cmf32_span = std::mdspan<
+    const float,
+    mf32_span::extents_type,
+    mf32_span::layout_type>;
 
 struct layout_cylinder;
 class CudaContext {

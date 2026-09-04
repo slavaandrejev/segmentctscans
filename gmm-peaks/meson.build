@@ -15,11 +15,11 @@ executable(
   , include_directories: project_inc
   , link_whole: [
         field_io_lib
-      , calc_hist_lib
       , cuda_context_lib
       ]
   , dependencies: [
         boost_dep
+      , calc_hist_dep
       , eigen_dep
       , fmt_dep
       , mdspan_dep

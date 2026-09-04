@@ -9,14 +9,17 @@
 #include <cuda-details/device-field-impl.h>
 
 struct convert_to_fp_kernel {
-    template <typename Config>
+    template <typename Config, typename ElementType>
     __device__
     void operator()(
         Config config
-      , const mu16_span in
-      ,       mf32_span out
-      , uint16_t lo
-      , uint16_t hi
+      , const std::mdspan<const ElementType
+          , std::dextents<uint32_t, 3>
+          , layout_cylinder
+          > in
+      , mf32_span out
+      , float lo
+      , float hi
       )
     {
         auto m = in.mapping();
@@ -41,8 +44,9 @@ struct convert_to_fp_kernel {
     }
 };
 
+template <typename ElementType>
 device_field_ptr<float>
-convert_to_fp(CudaContext &ctx, DeviceField<uint16_t> &in, uint16_t lo, uint16_t hi)
+convert_to_fp(CudaContext &ctx, const DeviceField<ElementType> &in, float lo, float hi)
 {
     auto mapping = in.mapping();
 
@@ -63,3 +67,11 @@ convert_to_fp(CudaContext &ctx, DeviceField<uint16_t> &in, uint16_t lo, uint16_t
 
     return out;
 }
+
+template
+device_field_ptr<float>
+convert_to_fp(CudaContext &, const DeviceField<uint16_t> &, float lo, float hi);
+
+template
+device_field_ptr<float>
+convert_to_fp(CudaContext &, const DeviceField<float> &, float lo, float hi);

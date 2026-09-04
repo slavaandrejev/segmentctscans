@@ -11,12 +11,11 @@ field_io_lib = static_library(
 
 cuda_algorithms_lib = static_library(
     'cuda_algorithms'
-  , 'find_intensity_range.cpp'
-  , 'convert_to_fp.cpp'
   , 'chambolle.cpp'
   , include_directories: project_inc
   , dependencies: [
-        cuda_dep
+        boost_dep
+      , cuda_dep
       , cccl_dep
       ]
   , cpp_args: [cuda_cpp_args]
@@ -32,10 +31,10 @@ executable(
         field_io_lib
       , cuda_algorithms_lib
       , cuda_context_lib
-      , calc_hist_lib
       ]
   , dependencies: [
         boost_dep
+      , calc_hist_dep
       , fmt_dep
       , libtiff_dep
       , mdspan_dep

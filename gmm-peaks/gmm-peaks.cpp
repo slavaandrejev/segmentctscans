@@ -92,8 +92,10 @@ int main(int argc, char *argv[]) try {
             auto d_denoised_img = upload(*cuda_context, denoised_img.view());
         t.stop("Upload to GPU time");
         const auto nbins = 500;
+        auto 𝛿 = 1.0 / (denoised_img.hi() - denoised_img.lo());
+        𝛿 = sqr(𝛿) < 0.5 / nbins ? 𝛿 : 0.0;
         t.start();
-            auto hist = calc_hist(*cuda_context, *d_denoised_img, 1.0 / (denoised_img.hi() - denoised_img.lo()), nbins);
+            auto [hist, min, max] = calc_hist(*cuda_context, *d_denoised_img, nbins, 𝛿);
         t.stop("Histogram time");
         const auto total      = rs::accumulate(hist, float{});
         auto const pct_hi_thr = (1.0 - tail_thr) * total;

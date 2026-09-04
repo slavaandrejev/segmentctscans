@@ -60,8 +60,8 @@ public:
         std::swap(mapping_storage, other.mapping_storage);
     }
 
-    void lo(uint16_t x) { lo_ = x; }
-    void hi(uint16_t x) { hi_ = x; }
+    void lo(float x) { lo_ = x; }
+    void hi(float x) { hi_ = x; }
 
     auto lo() const { return lo_; }
     auto hi() const { return hi_; }
@@ -73,8 +73,8 @@ private:
     std::vector<value_type, allocator> storage;
     layout_cylinder::mapping_storage<extents_type> mapping_storage;
 
-    uint16_t lo_{}; // if the storage is float, this is the original image level corresponding to 0.0f
-    uint16_t hi_{}; // if the storage is float, this is the original image level corresponding to 1.0f
+    float lo_{}; // the original image level corresponding to 0.0f
+    float hi_{}; // the original image level corresponding to 1.0f
 
     template <typename Archive>
     void save(Archive &ar, const unsigned int) const {
@@ -82,8 +82,11 @@ private:
 
         ar << mapping_storage;
         if constexpr (std::is_same_v<value_type, float>) {
-            ar << u<16>(lo_);
-            ar << u<16>(hi_);
+            auto punning = uint32_t{};
+            std::memcpy(&punning, &lo_, sizeof(punning));
+            ar << u<32>(punning);
+            std::memcpy(&punning, &hi_, sizeof(punning));
+            ar << u<32>(punning);
         }
         auto span = view();
         auto m    = span.mapping();
@@ -108,11 +111,12 @@ private:
         ar >> mapping_storage;
         storage.resize(mapping_storage.required_span_size());
         if constexpr (std::is_same_v<value_type, float>) {
-            auto v = u<16>{};
+            auto v = u<32>{};
+            auto punning = uint32_t{};
             ar >> v;
-            lo_ = uint16_t(v);
+            punning = v; std::memcpy(&lo_, &punning, sizeof(lo_));
             ar >> v;
-            hi_ = uint16_t(v);
+            punning = v; std::memcpy(&hi_, &punning, sizeof(hi_));
         }
         auto span = view();
         auto m    = span.mapping();

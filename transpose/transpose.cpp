@@ -1,6 +1,7 @@
 #include <filesystem>
 #include <string>
 
+#include <boost/hana/equal.hpp>
 #include <boost/hana/type.hpp>
 #include <boost/program_options.hpp>
 #include <boost/scope_exit.hpp>
@@ -12,19 +13,26 @@
 
 #include <opencv2/opencv.hpp>
 
+#include <range/v3/numeric/accumulate.hpp>
+
 #include <tiffio.h>
 
+#include <calc_hist.h>
+#include <cuda-context.h>
 #include <field.h>
+#include <find_circular_mask.h>
+#include <max_inscribed_circle.h>
 #include <timeop.h>
 
 #include <io/binoarchive.h>
 
-#include <find_circular_mask.h>
-#include <max_inscribed_circle.h>
+#include "convert_to_fp.h"
+#include "find_intensity_range.h"
 
 namespace fs   = std::filesystem;
 namespace hana = boost::hana;
 namespace po   = boost::program_options;
+namespace rs   = ranges;
 
 int main(int argc, char *argv[]) try {
     auto positional       = po::positional_options_description{};
@@ -37,11 +45,14 @@ int main(int argc, char *argv[]) try {
     auto reduced_height = 0;
     auto reduced_radius = 0.0;
 
+    auto cut_tails_at = 0.0f;
+
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "input file")
         ("output,o", po::value<std::string>(&out_file_name), "output file")
         ("height", po::value(&reduced_height), "reduced height")
         ("radius", po::value(&reduced_radius), "reduced radius")
+        ("tails", po::value(&cut_tails_at), "cut brightness levels at this fraction of total")
       ;
     positional.add("input", 1);
 
@@ -113,7 +124,7 @@ int main(int argc, char *argv[]) try {
         TIFFGetField(tif.get(), TIFFTAG_IMAGELENGTH, &h);
 
         auto sample_format = uint16_t{};
-        TIFFGetField(tif.get(), TIFFTAG_SAMPLEFORMAT, &sample_format);
+        TIFFGetFieldDefaulted(tif.get(), TIFFTAG_SAMPLEFORMAT, &sample_format);
 
         auto bits_per_sample = uint16_t{};
         TIFFGetField(tif.get(), TIFFTAG_BITSPERSAMPLE, &bits_per_sample);
@@ -147,6 +158,7 @@ int main(int argc, char *argv[]) try {
             return 1;
         }
     }
+    fmt::print("width = {}, height = {}\n", width, height);
 
     auto img_start  = tdir_t{};
     auto img_finish = num_images;
@@ -226,9 +238,64 @@ int main(int argc, char *argv[]) try {
         }
         t.stop("Transpose time");
 
+        auto cuda_context = make_context();
+
+        auto img = Field<float>{original_img.view().mapping()};
+        auto lo = 0.0f, hi = 0.0f;
+        t.start();
+            auto d_original_img = upload(*cuda_context, original_img.view());
+        t.stop("Upload to GPU time");
+        if constexpr (hana::type_c<uint16_t> == cpp_type) {
+            t.start();
+                std::tie(lo, hi) = find_intensity_range(*cuda_context, *d_original_img, cut_tails_at);
+            t.stop("Find intensity range time");
+        } else if constexpr (hana::type_c<float> == cpp_type) {
+            const auto nbins = 1024;
+            t.start();
+                auto [hist, min, max] = calc_hist(*cuda_context, *d_original_img, nbins, 0.0f);
+            t.stop("Histogram time");
+
+            const auto bin_width = (double(max) - double(min)) / nbins;
+
+            // auto f = std::unique_ptr<FILE, decltype(&fclose)>{
+            //     fopen("original-hist.txt", "wt")
+            //   , &fclose
+            //   };
+            // fmt::print(f.get(), "brightness ch0\n");
+            // for (auto i = size_t{1}; hist.size() - 1 > i; ++i) {
+            //     fmt::print(f.get(), "{} {}\n", (i + 0.5) * bin_width + min, hist[i]);
+            // }
+
+            auto const pct_lo_thr = cut_tails_at / bin_width;
+            auto const pct_hi_thr = (1.0 - cut_tails_at) / bin_width;
+            auto lo_thr_idx = size_t{}, hi_thr_idx = hist.size();
+            auto cum = 0.0;
+            for (auto i = size_t{}; hist.size() > i; ++i) {
+                cum += hist[i];
+                if (pct_lo_thr >= cum) { lo_thr_idx = i; }
+                if (pct_hi_thr <= cum) { hi_thr_idx = i; break; }
+            }
+            lo = float(lo_thr_idx * bin_width + min);
+            hi = float(hi_thr_idx * bin_width + min);
+        }
+        fmt::print("lowest brightness = {}\n", lo);
+        fmt::print("highest brightness = {}\n", hi);
+
+        t.start();
+            auto d_img = convert_to_fp(*cuda_context, *d_original_img, lo, hi);
+        t.stop("Normalizing to [0, 1] time");
+
+        img.lo(lo);
+        img.hi(hi);
+        t.start();
+            download(*cuda_context, *d_img, img.view());
+        t.stop("Download from GPU time");
+
         static auto constexpr K = 3;
 
         auto m             = original_img.view().mapping();
+        fmt::print("{} voxels\n", m.data_size());
+        fmt::print("height = {}, radius = {:.2f}\n", m.n_images(), radius);
         auto required_size = double(size_t{4} * (5 * K - 4) * m.required_span_size()) / (uint64_t(1) << 30);
         fmt::print(fmt::fg(fmt::color::light_coral) | fmt::emphasis::bold,
                    "Memory requirement for the CCP algorithm is {:.3f} GiB ({} labels)\n"
@@ -238,7 +305,7 @@ int main(int argc, char *argv[]) try {
         auto outit  = buffer.data();
         auto oa     = io::BinOArchive{outit};
 
-        oa << original_img;
+        oa << img;
 
         fwrite(buffer.data(), oa.size(), 1, out_file.get());
     };
