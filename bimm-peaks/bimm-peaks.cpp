@@ -1,3 +1,4 @@
+#include <concepts>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -5,6 +6,7 @@
 #include <random>
 #include <vector>
 
+#include <boost/container/static_vector.hpp>
 #include <boost/iostreams/device/mapped_file.hpp>
 #include <boost/math/constants/constants.hpp>
 #include <boost/parser/parser.hpp>
@@ -14,12 +16,13 @@
 
 #include <fmt/printf.h>
 
+#include <gsl/gsl_multimin.h>
+
+#include <range/v3/algorithm/copy.hpp>
 #include <range/v3/algorithm/sample.hpp>
-#include <range/v3/algorithm/stable_sort.hpp>
 #include <range/v3/numeric/accumulate.hpp>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/concat.hpp>
-#include <range/v3/view/iota.hpp>
 #include <range/v3/view/single.hpp>
 #include <range/v3/view/transform.hpp>
 
@@ -34,6 +37,7 @@
 #include "layout_strict_upper.h"
 #include "puv.h"
 
+namespace bc = boost::container;
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 namespace rs = ranges;
@@ -70,6 +74,85 @@ void validate(boost::any &v,
         throw validation_error(validation_error::invalid_option_value);
     }
     v = boost::any(LabelsArray{.data = data});
+}
+
+static auto constexpr max_params = max_phases * (max_phases + 3) / 2 + 3;
+
+template <typename  CostFunc, typename ProgressFunc>
+auto gsl_minimize(
+    CostFunc &&func
+  , std::span<const double> x_init
+  , std::span<const double> step_sizes
+  , double stop_size
+  , ProgressFunc &&pr
+  )
+{
+    struct Adapt {
+        const CostFunc &func;
+        static double invoke(const gsl_vector *x, void *params) {
+            auto self = static_cast<Adapt *>(params);
+
+            auto xx = bc::static_vector<double, max_params>(x->size);
+            for (auto i = 0; xx.size() > i; ++i) {
+                xx[i] = gsl_vector_get(x, i);
+            }
+
+            return self->func(xx);
+        }
+    };
+
+    auto const n = x_init.size();
+
+    auto s = std::unique_ptr<
+        gsl_multimin_fminimizer
+      , decltype(&gsl_multimin_fminimizer_free)
+      >
+    {
+        gsl_multimin_fminimizer_alloc(gsl_multimin_fminimizer_nmsimplex2, n),
+        &gsl_multimin_fminimizer_free
+    };
+
+    auto adapt      = Adapt{std::forward<CostFunc>(func)};
+    auto minex_func = gsl_multimin_function{&Adapt::invoke, n, &adapt};
+
+    auto gsl_x_init = std::unique_ptr<gsl_vector, decltype(&gsl_vector_free)>{
+        gsl_vector_alloc(n)
+      , &gsl_vector_free
+      };
+    auto gsl_step_size = std::unique_ptr<gsl_vector, decltype(&gsl_vector_free)>{
+        gsl_vector_alloc(n)
+      , &gsl_vector_free
+      };
+
+    for (auto i = 0; gsl_x_init->size > i; ++i) {
+        gsl_vector_set(gsl_x_init.get(), i, x_init[i]);
+    }
+    for (auto i = 0; gsl_step_size->size > i; ++i) {
+        gsl_vector_set(gsl_step_size.get(), i, step_sizes[i]);
+    }
+
+    gsl_multimin_fminimizer_set(s.get(), &minex_func, gsl_x_init.get(), gsl_step_size.get());
+
+    auto status = int(GSL_CONTINUE);
+    static auto constexpr max_iter = 10'000;
+    auto x = bc::static_vector<double, max_params>(s->x->size);
+    for (auto iter = 0; max_iter > iter; ++iter) {
+        status = gsl_multimin_fminimizer_iterate(s.get());
+        if (0 != status) break;
+
+        auto size = gsl_multimin_fminimizer_size(s.get());
+        status = gsl_multimin_test_size(size, stop_size);
+
+        auto cost = gsl_multimin_fminimizer_minimum(s.get());
+        for (auto i = 0; x.size() > i; ++i) {
+            x[i] = gsl_vector_get(s->x, i);
+        }
+        pr(iter, cost, size, x);
+
+        if (status != GSL_CONTINUE) break;
+    }
+
+    return std::tuple{status, x};
 }
 
 int main(int argc, char *argv[]) try {
@@ -168,16 +251,15 @@ int main(int argc, char *argv[]) try {
     }
     t.stop("Linearize time");
 
-    static auto constexpr N         = 10000;
-    static auto constexpr N_batches = 20;
+    static auto constexpr N = 20'000;
 
     auto rd        = std::random_device{};
     auto gen       = std::mt19937{rd()};
-    auto indices   = std::vector<size_t>(N * N_batches);
-    auto samples_u = std::vector<double>(N * N_batches);
-    auto samples_v = std::vector<double>(N * N_batches);
+    auto indices   = std::vector<size_t>(N);
+    auto samples_u = std::vector<double>(N);
+    auto samples_v = std::vector<double>(N);
 
-    rs::sample(eligible, indices.begin(), N * N_batches, gen);
+    rs::sample(eligible, indices.begin(), indices.size(), gen);
     for (auto i = size_t{}; indices.size() > i; ++i) {
         samples_u[i] = linear_u[indices[i]];
         samples_v[i] = linear_v[indices[i]];
@@ -193,44 +275,15 @@ int main(int argc, char *argv[]) try {
     const auto 𝜌_idx       = 𝜎b_idx + 1;
     const auto ds_idx      = 𝜌_idx  + 1;
 
-    using GP         = GenoPheno<pwqBoundStrategy, linScalingStrategy>;
-    using Parameters = CMAParameters<GP>;
+    const auto w_min  = -4.6,   w_max  = 4.6;    // somewhat logarithm of the real range,
+                                                 // will be transformed by softmax
+    const auto I_min  =  0.0,   I_max  = 1.0;
+    const auto 𝜎n_min = -7.0,   𝜎n_max = 0.69;   // logarithm of the real range
+    const auto 𝜎b_min = -2.3,   𝜎b_max = 2.3;    // logarithm of the real range
+    const auto 𝜌_min  =  0.0,   𝜌_max  = 0.9;
+    const auto ds_min = -0.69,  ds_max = 1.0986; // logarithm of the real range
 
-    auto x0 = std::vector<double>(n_params, 0);
-    auto ub = std::vector<double>(n_params, 0);
-    auto lb = std::vector<double>(n_params, 0);
-
-    for (auto i = 0; n_weights > i; ++i) {
-        lb[i] = std::log(1e-2);
-        ub[i] = std::log(1e2);
-    }
-    for (auto i = 0; n_labels > i; ++i) {
-        x0[I_start_idx + i] = (init_peaks.data[i] - lo) / (hi - lo);
-        lb[I_start_idx + i] = 0.0;
-        ub[I_start_idx + i] = 1.0;
-    }
-    lb[𝜎n_idx] = std::log(0.001); ub[𝜎n_idx] = std::log(2.0);
-    lb[𝜎b_idx] = std::log(0.1);   ub[𝜎b_idx] = std::log(10.0);
-    lb[𝜌_idx]  =   0;                ub[𝜌_idx]  = 0.9;
-    lb[ds_idx] = std::log(0.5);   ub[ds_idx] = std::log(3);
-
-    auto 𝜎 = 0.5;
-
-    auto        gp = GP{&lb[0], &ub[0], n_params};
-    auto cmaparams = Parameters(n_params, &x0[0], 𝜎, -1, 0, gp);
-
-    if (0 != vm.count("cmaes-pr")) {
-        cmaparams.set_fplot(cmaes_progress_file_name);
-    }
-    cmaparams.set_mt_feval(true);
-    cmaparams.set_ftolerance(1e-18);
-    cmaparams.set_max_iter(2000);
-    cmaparams.set_uh(true);
-    cmaparams.set_stopping_criteria(STAGNATION, false);
-    // cmaparams.set_stopping_criteria(AUTOMAXITER, false);
-    // cmaparams.set_algo(aBIPOP_CMAES);
-    // cmaparams.set_restarts(9);
-
+    // fix the first weight to zero, then use softmax to produce probability weights
     auto get_weights = [](std::span<const double> a) {
         auto all_w = rv::concat(rv::single(0.0), a);
         auto exp_vew = all_w | rv::transform([](auto x) {
@@ -238,12 +291,16 @@ int main(int argc, char *argv[]) try {
         });
         auto sum = rs::accumulate(exp_vew, 0.0);
 
-        auto w = all_w | rv::transform([&](auto x) {
+        auto w = bc::static_vector<double, max_params>(a.size() + 1);
+        auto w_view = all_w | rv::transform([&](auto x) {
             return std::exp(x) / sum;
-        }) | rs::to_vector;
+        });
+        rs::copy(w_view, w.begin());
 
         return w;
     };
+
+
     auto get_labels = [](std::span<const double> a) {
 #if 1
         return gap_set_project(a, 0.1);
@@ -252,58 +309,102 @@ int main(int argc, char *argv[]) try {
 #endif
     };
 
-    auto batch_count = 0;
-    FitFunc cost_fun = [&](const double *a, const int) {
+    auto sigm = [](double unr, double min, double max) {
+        return (max - min) / (1.0 + std::exp(-unr)) + min;
+    };
+    // assume parameters are clamped between min and max with a sigmoid
+    auto restrict_params = [&](std::span<double> x) {
+        auto restr = bc::static_vector<double, max_params>(n_params);
+
+        for (auto i = 0; n_weights > i; ++i) {
+            restr[i] = sigm(x[i], w_min, w_max);
+        }
+        for (auto i = 0; n_labels > i; ++i) {
+            restr[I_start_idx + i] = sigm(x[I_start_idx + i], I_min, I_max);
+        }
+        restr[𝜎n_idx] = sigm(x[𝜎n_idx], 𝜎n_min, 𝜎n_max);
+        restr[𝜎b_idx] = sigm(x[𝜎b_idx], 𝜎b_min, 𝜎b_max);
+        restr[𝜌_idx]  = sigm(x[𝜌_idx],  𝜌_min,  𝜌_max);
+        restr[ds_idx] = sigm(x[ds_idx], ds_min, ds_max);
+
+        return restr;
+    };
+
+    auto cost_func = [&](std::span<double> x) {
         auto res = 0.0;
 
-        auto w  = get_weights({a, n_weights});
-        auto Is = get_labels({&a[I_start_idx], n_labels});
+        auto restr = restrict_params(x);
+
+        auto w  = get_weights({&restr[0], n_weights});
+        auto Is = get_labels({&restr[I_start_idx], n_labels});
 
         for (auto i = 0; N > i; ++i) {
             res += -std::log(full_p(
-                samples_u[i + N * batch_count]
-              , samples_v[i + N * batch_count]
+                samples_u[i]
+              , samples_v[i]
               , w
               , Is
-              , a[𝜎n_idx]
-              , a[𝜎b_idx]
-              , a[ds_idx]
-              , a[𝜌_idx]
+              , restr[𝜎n_idx]
+              , restr[𝜎b_idx]
+              , restr[ds_idx]
+              , restr[𝜌_idx]
               ));
         }
 
         return res / N;
     };
 
-    ProgressFunc<Parameters, CMASolutions> pf = [&](const Parameters &, const CMASolutions &cmasols) {
-        fmt::print("{:6} {:14.10f}\r", cmasols.niter(), cmasols.get_best_seen_candidate().get_fvalue());
-        fflush(stdout);
-
-        if (0 == cmasols.niter() % N_batches) {
-            batch_count = 0;
-        } else {
-            ++batch_count;
-        }
-
-        return 0;
+    auto inv_sigm = [](double restr, double min, double max) {
+        return -std::log((max - min) / (restr - min) - 1.0);
     };
+    auto x0 = std::vector<double>(n_params, 0);
+    for (auto i = 0; n_labels > i; ++i) {
+        x0[I_start_idx + i] = inv_sigm((init_peaks.data[i] - lo) / (hi - lo), I_min, I_max);
+    }
+    auto step_sizes = std::vector<double>(n_params, 1.0);
+    auto [status, res] = gsl_minimize(
+        cost_func
+      , x0
+      , step_sizes
+      , 0.001
+      , [&](int iter, double cost, double size, std::span<double> x) {
+            auto restr = restrict_params(x);
 
-    auto cmasols = cmaes<GP>(cost_fun, cmaparams, pf);
-    fmt::print("\n");
-    fmt::print("stop: {} ({})\n", cmasols.status_msg(), cmasols.run_status());
-
-    // auto x = gp.pheno(cmasols.get_best_seen_candidate().get_x_dvec());
-    auto x = gp.pheno(cmasols.xmean());
+            auto w  = get_weights({&restr[0], n_weights});
+            auto Is = get_labels({&restr[I_start_idx], n_labels});
+            fmt::print("{:5} {:14.9f} {:9.6f} |", iter, cost, size);
+            for (auto i = 0; w.size() > i; ++i) {
+                fmt::print("{:9.6f}", w[i]);
+            }
+            fmt::print(" |");
+            for (auto i = 0; Is.size() > i; ++i) {
+                fmt::print("{:6.3f}", Is[i]);
+            }
+            fmt::print(" |");
+            fmt::print("{:7.4f}", std::exp(restr[𝜎n_idx]));
+            fmt::print("{:7.4f}", std::exp(restr[𝜎b_idx]));
+            fmt::print("{:7.4f}", std::exp(restr[ds_idx]));
+            fmt::print("{:7.4f}\n", restr[𝜌_idx]);
+        }
+      );
+    if (GSL_SUCCESS != status) {
+        fmt::print(stderr,
+            "GSL fminimizer failed: {} (status = {})\n"
+          , gsl_strerror(status), status
+          );
+        return 1;
+    }
+    auto restr = restrict_params(res);
 
     fmt::print(
         "𝜎b = {}, 𝜎n = {}, ds = {}, 𝜌 = {}\n"
-      , std::exp(x[𝜎b_idx])
-      , std::exp(x[𝜎n_idx]) * (hi - lo)
-      , std::exp(x[ds_idx])
-      , x[𝜌_idx]);
+      , std::exp(restr[𝜎b_idx])
+      , std::exp(restr[𝜎n_idx]) * (hi - lo)
+      , std::exp(restr[ds_idx])
+      , restr[𝜌_idx]);
 
-    auto w  = get_weights({&x[0], n_weights});
-    auto Is = get_labels({&x[I_start_idx], n_labels});
+    auto w  = get_weights({&restr[0], n_weights});
+    auto Is = get_labels({&restr[I_start_idx], n_labels});
     for (auto i = 0; n_labels > i; ++i) {
         fmt::print("{}\n", (hi - lo) * Is[i] + lo);
     }
@@ -336,8 +437,8 @@ int main(int argc, char *argv[]) try {
                 normalized_u
               , w
               , Is
-              , std::exp(x[𝜎n_idx])
-              , std::exp(x[ds_idx])
+              , std::exp(restr[𝜎n_idx])
+              , std::exp(restr[ds_idx])
               );
             fmt::print(full_pdf_file.get(), "{} {}\n", u, pdf / (hi - lo));
         }
@@ -354,7 +455,7 @@ int main(int argc, char *argv[]) try {
                 auto pdf = w[c] * marginal_p_i(
                     normalized_u
                   , Is[c]
-                  , std::exp(x[𝜎n_idx])
+                  , std::exp(restr[𝜎n_idx])
                   );
                 fmt::print(pdf_file.get(), "{} {}\n", u, pdf / (hi - lo));
             }
@@ -375,8 +476,8 @@ int main(int argc, char *argv[]) try {
                         normalized_u
                       , Is[i]
                       , Is[j]
-                      , std::exp(x[𝜎n_idx])
-                      , std::exp(x[ds_idx])
+                      , std::exp(restr[𝜎n_idx])
+                      , std::exp(restr[ds_idx])
                       );
                     fmt::print(pdf_file.get(), "{} {}\n", u, pdf / (hi - lo));
                 }

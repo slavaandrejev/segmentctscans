@@ -2,24 +2,31 @@
 
 #include <algorithm>
 #include <span>
-#include <vector>
 
+#include <boost/container/static_vector.hpp>
+
+#include <range/v3/algorithm/copy.hpp>
 #include <range/v3/algorithm/stable_sort.hpp>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/iota.hpp>
+
+#include <cuda-context.h>
 
 // Project `a` on a set where all pair-wise distances are above or equal 𝜀
 auto gap_set_project(std::span<const double> a, double 𝜀) {
     namespace rs = ranges;
     namespace rv = rs::views;
 
+    using namespace boost::container;
+
     const auto n = a.size();
-    auto labels = std::vector<double>(n);
+    auto labels = static_vector<double, max_phases>(n);
     if (n == 0) return labels;
 
     const auto upper = 1.0 - 𝜀 * double(n - 1);
 
-    auto order = rv::iota(size_t{}, n) | rs::to_vector;
+    auto order = static_vector<double, max_phases>(n);
+    rs::copy(rv::iota(size_t{}, n), order.begin());
     rs::stable_sort(order, [&](auto i, auto j) { return a[i] < a[j]; });
 
     struct Block {
@@ -27,7 +34,7 @@ auto gap_set_project(std::span<const double> a, double 𝜀) {
         std::size_t count;
     };
 
-    auto blocks = std::vector<Block>{};
+    auto blocks = static_vector<Block, max_phases>{};
     blocks.reserve(n);
 
     for (auto i = size_t{}; n > i; ++i) {
