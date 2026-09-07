@@ -70,7 +70,7 @@ void validate(boost::any &v,
       , bp::ws
       , data
       );
-    if (!result || data.size() < 2 || data.size() > max_potts_labels) {
+    if (!result || data.size() < 2 || data.size() > max_phases) {
         throw validation_error(validation_error::invalid_option_value);
     }
     v = boost::any(LabelsArray{.data = data});
@@ -139,7 +139,7 @@ int main(int argc, char *argv[]) try {
     auto cuda_context = make_context();
 
     auto 𝜏  = 0.99f * std::sqrt(1.0f / 12.0f);
-    hana::for_each(hana::make_range(2_c, hana::llong_c<max_potts_labels + 1>), [&](auto i) {
+    hana::for_each(hana::make_range(2_c, hana::llong_c<max_phases + 1>), [&](auto i) {
         if (labels.data.size() == hana::value(i)) {
             auto lo = img.lo();
             auto hi = img.hi();

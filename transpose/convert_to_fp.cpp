@@ -30,16 +30,18 @@ struct convert_to_fp_kernel {
         if (m.row_begin(col) <= row && row < m.row_end(col)) {
             auto n = cuda::gpu_thread.index(cuda::grid, config).x;
 
-            auto v = in[n, row, col];
-            if (v <= lo) {
-                out[n, row, col] = 0.0f;
-                return;
+            if (m.n_images() > n) {
+                auto v = in[n, row, col];
+                if (v <= lo) {
+                    out[n, row, col] = 0.0f;
+                    return;
+                }
+                if (v >= hi) {
+                    out[n, row, col] = 1.0f;
+                    return;
+                }
+                out[n, row, col] = float(v - lo) / (hi - lo);
             }
-            if (v >= hi) {
-                out[n, row, col] = 1.0f;
-                return;
-            }
-            out[n, row, col] = float(v - lo) / (hi - lo);
         }
     }
 };

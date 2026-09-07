@@ -635,4 +635,4 @@ constexpr auto instantiate_potts(std::index_sequence<Ks...>)
 }
 
 [[maybe_unused]] constinit auto potts_instances =
-    instantiate_potts(std::make_index_sequence<max_potts_labels - 1>{});
+    instantiate_potts(std::make_index_sequence<max_phases - 1>{});

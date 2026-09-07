@@ -9,9 +9,9 @@ field_io_lib = static_library(
       }
   )
 
-potts_min_part_lib = static_library(
-    'find_intensity_range'
-  , 'potts-min-partition.cpp'
+grad_magn_lib = static_library(
+    'grad_magn'
+  , 'grad_magn.cpp'
   , include_directories: project_inc
   , dependencies: [
         boost_dep
@@ -20,21 +20,23 @@ potts_min_part_lib = static_library(
       ]
   , cpp_args: [cuda_cpp_args]
   , build_by_default: false
-  , override_options: cuda_overr_options + {'optimization' : '3'}
+  , override_options: cuda_overr_options
   )
 
 executable(
-    'potts-model'
-  , 'potts-model.cpp'
+    'bimm-peaks'
+  , 'bimm-peaks.cpp'
   , include_directories: project_inc
   , link_whole: [
-        cuda_context_lib
-      , field_io_lib
-      , potts_min_part_lib
+        field_io_lib
+      , cuda_context_lib
+      , grad_magn_lib
       ]
   , dependencies: [
         boost_dep
       , fmt_dep
+      , gsl_dep
+      , libcmaes_dep
       , mdspan_dep
       , omp_dep
       , opencv_dep

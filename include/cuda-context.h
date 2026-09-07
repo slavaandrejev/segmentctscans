@@ -4,6 +4,8 @@
 
 #include <mdspan/mdspan.hpp>
 
+static constexpr auto max_phases = 6;
+
 struct layout_cylinder;
 
 class CudaContext;
