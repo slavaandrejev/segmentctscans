@@ -23,20 +23,18 @@
 #include <range/v3/view/single.hpp>
 #include <range/v3/view/transform.hpp>
 
-#include <gsl/gsl_errno.h>
-#include <gsl/gsl_integration.h>
-#include <gsl/gsl_sf_erf.h>
-
 #include <io/biniarchive.h>
 
 #include <cuda-context.h>
 #include <field.h>
 #include <timeop.h>
 
+#include "gap_set_project.h"
 #include "grad_magn.h"
+#include "layout_strict_upper.h"
+#include "puv.h"
 
 namespace fs = std::filesystem;
-namespace mc = boost::math::double_constants;
 namespace po = boost::program_options;
 namespace rs = ranges;
 namespace rv = rs::views;
@@ -73,79 +71,6 @@ void validate(boost::any &v,
     }
     v = boost::any(LabelsArray{.data = data});
 }
-
-template <typename F>
-auto gsl_integration(double a, double b, double epsabs, double epsrel, F func)
-{
-    struct Adapt {
-        Adapt(const F& func) : func(func) {}
-        static double invoke(double x, void *params) {
-            return static_cast<Adapt*>(params)->func(x);
-        }
-        const F &func;
-    };
-    auto constexpr limit = 100'000u;
-    using gsl_worspace = std::unique_ptr<
-        gsl_integration_workspace
-      , decltype(&gsl_integration_workspace_free)
-      >;
-    static thread_local auto ws = gsl_worspace{
-        gsl_integration_workspace_alloc(limit)
-      , &gsl_integration_workspace_free
-      };
-    auto adapt = Adapt{func};
-    auto f = gsl_function{&Adapt::invoke, &adapt};
-    auto result = 0.0, abserr = 0.0;
-    const auto status = gsl_integration_qags(&f, a, b, epsabs, epsrel, limit, ws.get(), &result, &abserr);
-    return std::tuple{status, result, abserr};
-}
-
-struct layout_strict_upper {
-    template <class Extents>
-    struct mapping {
-        using layout_type  = layout_strict_upper;
-        using extents_type = Extents;
-        using index_type   = typename Extents::index_type;
-        using size_type    = typename Extents::size_type;
-        using rank_type    = typename Extents::rank_type;
-
-        extents_type ext_{};
-
-        mapping() = default;
-
-        mapping(const layout_strict_upper::mapping<extents_type> &other)
-          : ext_{other.ext_}
-        {}
-
-        mapping(const extents_type &e)
-          : ext_(e)
-        {}
-
-        constexpr auto operator()(index_type i, index_type j) const -> index_type {
-            return (2 * ext_.extent(0) - 1 - i) * i / 2 + j - i - 1;
-        }
-
-        constexpr index_type required_span_size() const {
-            auto n = ext_.extent(0);
-            return n * (n - 1) / 2;
-        }
-
-        constexpr const extents_type& extents() const { return ext_; }
-
-        static constexpr bool is_always_unique()     { return true; }
-        static constexpr bool is_always_exhaustive() { return true; }
-        static constexpr bool is_always_strided()    { return false; }
-        static constexpr bool is_unique()            { return true; }
-        static constexpr bool is_exhaustive()        { return true; }
-        static constexpr bool is_strided()           { return false; }
-
-        friend constexpr bool
-        operator==(const mapping &, const mapping &) = default;
-    };
-};
-template <typename T>
-using strict_upper_span = std::mdspan<T, std::dextents<uint32_t, 2>, layout_strict_upper>;
-
 
 int main(int argc, char *argv[]) try {
     gsl_set_error_handler_off();
@@ -268,103 +193,6 @@ int main(int argc, char *argv[]) try {
     const auto 𝜌_idx       = 𝜎b_idx + 1;
     const auto ds_idx      = 𝜌_idx  + 1;
 
-    auto p_i = [](double u, double v, double I_i, double log𝜎_n, double 𝜌) {
-        static auto constexpr two_root_two_div_pi = 0.9003163161571060695551992;
-        auto 𝜎_n2 = std::exp(2 * log𝜎_n);
-        auto v2 = sqr(v);
-        return two_root_two_div_pi * v2 / (sqr(𝜎_n2) * std::pow(1 - 𝜌, 1.5)) *
-               std::exp(-0.5 * sqr(u - I_i) / 𝜎_n2 - v2 / 𝜎_n2 / (1.0 - 𝜌));
-    };
-
-    auto p_ij = [](
-        double u
-      , double v
-      , double I_i
-      , double I_j
-      , double log𝜎_n
-      , double log𝜎_b
-      , double logds
-      , double 𝜌
-      )
-    {
-        static auto constexpr one_two_root_two_pi = 0.1125395395196382586943999;
-        static auto constexpr one_root_two_pi     = 0.3989422804014326779399461;
-
-        auto 𝜎_n2 = std::exp(2 * log𝜎_n);
-        auto 𝜎_n  = std::exp(log𝜎_n);
-        auto 𝜎_b  = std::exp(log𝜎_b);
-        auto ds   = std::exp(logds);
-        auto a    = 𝜎_n2 * (1 - 𝜌);
-
-        auto [status, integral, abserr] =
-            gsl_integration(-ds, ds, 1e-10, 1e-6, [&](double t) {
-                auto I = I_i + 0.5 * (I_j - I_i) *
-                    (1 + gsl_sf_erf(t / mc::root_two));
-
-                if (30 > std::abs(t) && 1e-9 < std::abs(I_j - I_i)) {
-                    auto G = one_root_two_pi * std::abs(I_j - I_i) / 𝜎_b
-                      * std::exp(-sqr(t) / 2);
-
-                    return std::exp(
-                        -0.5 * sqr(u - I) / 𝜎_n2 - sqr(v - G) / a
-                      )
-                      * (-std::expm1(-4 * v * G / a)) / G;
-                } else {
-                    return std::exp(
-                        -0.5 * sqr(u - I) / 𝜎_n2 - sqr(v) / a
-                      )
-                      * 4 * v / a;
-                }
-            });
-
-        if (GSL_SUCCESS != status) {
-            fmt::print(stderr,
-                "GSL QAGS failed: {} (status = {})\n"
-                "integral = {}, abserr = {}\n"
-                "u = {}, v = {}\n"
-                "I_i ={}, I_j = {}\n"
-                "𝜎_n = {}, 𝜎_b = {}\n"
-                "ds = {}, 𝜌 = {}\n"
-                "a = {}\n"
-              , gsl_strerror(status), status
-              , integral, abserr
-              , u, v
-              , I_i, I_j
-              , 𝜎_n, 𝜎_b
-              , ds, 𝜌
-              , a);
-        }
-
-        return one_two_root_two_pi * v / (ds * 𝜎_n * std::sqrt(a)) * integral;
-    };
-
-    auto p = [&](
-        double u
-      , double v
-      , std::span<const double> w
-      , std::span<const double> I
-      , double log𝜎_n
-      , double log𝜎_b
-      , double logds
-      , double 𝜌
-      )
-    {
-        auto res = 0.0;
-
-        for (auto i = 0; I.size() > i; ++i) {
-            res += w[i] * p_i(u, v, I[i], log𝜎_n, 𝜌);
-        }
-        auto idx = I.size();
-        for (auto i = 0; I.size() - 1 > i; ++i) {
-            for (auto j = i + 1; I.size() > j; ++j) {
-                res += w[idx] * p_ij(u, v, I[i], I[j], log𝜎_n, log𝜎_b, logds, 𝜌);
-                ++idx;
-            }
-        }
-
-        return res;
-    };
-
     using GP         = GenoPheno<pwqBoundStrategy, linScalingStrategy>;
     using Parameters = CMAParameters<GP>;
 
@@ -418,53 +246,7 @@ int main(int argc, char *argv[]) try {
     };
     auto get_labels = [](std::span<const double> a) {
 #if 1
-        static auto constexpr 𝜀 = 0.1;
-
-        const auto n = a.size();
-        auto labels = std::vector<double>(n);
-        if (n == 0) return labels;
-
-        const auto upper = 1.0 - 𝜀 * double(n - 1);
-
-        auto order = rv::iota(size_t{}, n) | rs::to_vector;
-        rs::stable_sort(order, [&](auto i, auto j) { return a[i] < a[j]; });
-
-        struct Block {
-            double sum;
-            std::size_t count;
-        };
-
-        auto blocks = std::vector<Block>{};
-        blocks.reserve(n);
-
-        for (auto i = size_t{}; n > i; ++i) {
-            blocks.push_back({a[order[i]] - 𝜀 * double(i), 1});
-
-            while (blocks.size() > 1) {
-                auto &left = blocks[blocks.size() - 2];
-                const auto &right = blocks.back();
-
-                if (left.sum / double(left.count) <= right.sum / double(right.count)) {
-                    break;
-                }
-
-                left.sum += right.sum;
-                left.count += right.count;
-                blocks.pop_back();
-            }
-        }
-
-        auto i = std::size_t{};
-        for (const auto &block : blocks) {
-            const auto value = std::clamp(
-                block.sum / double(block.count), 0.0, upper);
-
-            for (std::size_t j = 0; j < block.count; ++j, ++i) {
-                labels[order[i]] = value + 𝜀 * double(i);
-            }
-        }
-
-        return labels;
+        return gap_set_project(a, 0.1);
 #else
         return std::vector<double>(a.begin(), a.end());
 #endif
@@ -478,7 +260,7 @@ int main(int argc, char *argv[]) try {
         auto Is = get_labels({&a[I_start_idx], n_labels});
 
         for (auto i = 0; N > i; ++i) {
-            res += -std::log(p(
+            res += -std::log(full_p(
                 samples_u[i + N * batch_count]
               , samples_v[i + N * batch_count]
               , w
@@ -538,77 +320,6 @@ int main(int argc, char *argv[]) try {
 
     if (0 != vm.count("pdf-name") && 0 != vm.count("u-start") && 0 != vm.count("u-end")) {
         static auto constexpr steps = 512;
-
-        auto marginal_p_i = [](double u, double I_i, double 𝜎_n) {
-            static auto constexpr one_root_two_pi = 0.3989422804014326779399461;
-
-            return one_root_two_pi / 𝜎_n * std::exp(
-                -sqr(u - I_i) / (2 * sqr(𝜎_n))
-            );
-        };
-
-        auto marginal_p_ij = [](
-            double u
-          , double I_i
-          , double I_j
-          , double 𝜎_n
-          , double ds
-          )
-        {
-            static auto constexpr one_root_two_pi = 0.3989422804014326779399461;
-
-            auto [status, integral, abserr] =
-                gsl_integration(-ds, ds, 1e-10, 1e-6, [&](double t) {
-                    auto I = I_i + 0.5 * (I_j - I_i) *
-                        (1 + gsl_sf_erf(t / mc::root_two));
-
-                    return std::exp(
-                        -sqr(u - I) / (2 * sqr(𝜎_n))
-                    );
-                });
-
-            if (GSL_SUCCESS != status) {
-                fmt::print(stderr,
-                    "GSL QAGS failed: {} (status = {})\n"
-                    "integral = {}, abserr = {}\n"
-                    "u = {}\n"
-                    "I_i ={}, I_j = {}\n"
-                    "𝜎_n = {}\n"
-                    "ds = {}\n"
-                  , gsl_strerror(status), status
-                  , integral, abserr
-                  , u
-                  , I_i, I_j
-                  , 𝜎_n
-                  , ds);
-            }
-
-            return one_root_two_pi / (2 * ds * 𝜎_n) * integral;
-        };
-
-        auto marginal_p = [&](
-            double u
-          , std::span<const double> w
-          , std::span<const double> I
-          , double 𝜎_n
-          , double ds
-          )
-        {
-            auto res = 0.0;
-
-            for (auto i = 0; I.size() > i; ++i) {
-                res += w[i] * marginal_p_i(u, I[i], 𝜎_n);
-            }
-            auto idx = I.size();
-            for (auto i = 0; I.size() - 1 > i; ++i) {
-                for (auto j = i + 1; I.size() > j; ++j) {
-                    res += w[idx] * marginal_p_ij(u, I[i], I[j], 𝜎_n, ds);
-                    ++idx;
-                }
-            }
-
-            return res;
-        };
 
         auto full_pdf_file_name = pdf_name + "-full.txt";
         auto full_pdf_file = std::unique_ptr<FILE, decltype(&fclose)>{
