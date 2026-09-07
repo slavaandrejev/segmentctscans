@@ -34,6 +34,7 @@ executable(
       ]
   , dependencies: [
         boost_dep
+      , calc_hist_dep
       , fmt_dep
       , gsl_dep
       , libcmaes_dep

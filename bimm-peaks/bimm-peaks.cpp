@@ -28,6 +28,7 @@
 
 #include <io/biniarchive.h>
 
+#include <calc_hist.h>
 #include <cuda-context.h>
 #include <field.h>
 #include <timeop.h>
@@ -131,11 +132,15 @@ auto gsl_minimize(
         gsl_vector_set(gsl_step_size.get(), i, step_sizes[i]);
     }
 
-    gsl_multimin_fminimizer_set(s.get(), &minex_func, gsl_x_init.get(), gsl_step_size.get());
+    auto status = gsl_multimin_fminimizer_set(s.get(), &minex_func, gsl_x_init.get(), gsl_step_size.get());
 
-    auto status = int(GSL_CONTINUE);
-    static auto constexpr max_iter = 10'000;
     auto x = bc::static_vector<double, max_params>(s->x->size);
+
+    if (GSL_SUCCESS != status) {
+        return std::tuple{status, x};
+    }
+
+    static auto constexpr max_iter = 10'000;
     for (auto iter = 0; max_iter > iter; ++iter) {
         status = gsl_multimin_fminimizer_iterate(s.get());
         if (0 != status) break;
@@ -168,6 +173,7 @@ int main(int argc, char *argv[]) try {
     auto init_peaks               = LabelsArray{};
     auto u_start                  = 0.0;
     auto u_end                    = 0.0;
+    auto tail_thr                 = 0.01;
 
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "Input file")
@@ -176,6 +182,7 @@ int main(int argc, char *argv[]) try {
         ("cmaes-pr", po::value(&cmaes_progress_file_name), "Base name to write resulting distributions")
         ("u-start", po::value(&u_start), "Start of the PDF output range")
         ("u-end", po::value(&u_end), "End of the PDF output range")
+        ("tailthr", po::value(&tail_thr)->multitoken(), "Threshold to cut the tail of the histogram")
       ;
     positional.add("input", 1);
 
@@ -224,9 +231,43 @@ int main(int argc, char *argv[]) try {
     t.start();
         download(*cuda_context, *d_grad_magn_img, grad_magn_img.view());
     t.stop("Download from GPU time");
+    d_img.reset();
+    d_grad_magn_img.reset();
 
     auto lo = img.lo();
     auto hi = img.hi();
+
+    auto hi_data_thr = 0.0f;
+    auto lo_data_thr = 0.0f;
+    {
+        t.start();
+            auto d_img = upload(*cuda_context, img.view());
+        t.stop("Upload to GPU time");
+        const auto nbins = 1024;
+        auto 𝛿 = 1.0 / (hi - lo);
+        𝛿 = sqr(𝛿) < 0.5 / nbins ? 𝛿 : 0.0;
+        t.start();
+            auto [hist, min, max] = calc_hist(*cuda_context, *d_img, nbins, 𝛿);
+        t.stop("Histogram time");
+
+        const auto bin_width = (double(max) - double(min)) / nbins;
+
+        auto const pct_lo_thr = tail_thr / bin_width;
+        auto const pct_hi_thr = (1.0 - tail_thr) / bin_width;
+
+        auto lo_thr_idx = size_t{}, hi_thr_idx = hist.size();
+
+        auto cum = 0.0;
+        for (auto i = size_t{}; hist.size() > i; ++i) {
+            cum += hist[i];
+            if (pct_lo_thr >= cum) { lo_thr_idx = i; }
+            if (pct_hi_thr <= cum) { hi_thr_idx = i; break; }
+        }
+
+        lo_data_thr = float(lo_thr_idx * bin_width + min);
+        hi_data_thr = float(hi_thr_idx * bin_width + min);
+    }
+    fmt::print("Fitting [{}, {}] range of intensities\n", lo_data_thr * (hi - lo) + lo, hi_data_thr * (hi - lo) + lo);
 
     auto u_view = img.view();
     auto v_view = grad_magn_img.view();
@@ -242,7 +283,7 @@ int main(int argc, char *argv[]) try {
             for (auto k = uint32_t{}; m.n_images() > k; ++k) {
                 linear_u[count] = u_view[k, row, col];
                 linear_v[count] = v_view[k, row, col];
-                if (0 < v_view[k, row, col]) {
+                if (0 < v_view[k, row, col] && lo_data_thr <= u_view[k, row, col] && u_view[k, row, col] <= hi_data_thr) {
                     eligible.push_back(count);
                 }
                 ++count;
@@ -280,7 +321,7 @@ int main(int argc, char *argv[]) try {
     const auto I_min  =  0.0,   I_max  = 1.0;
     const auto 𝜎n_min = -7.0,   𝜎n_max = 0.69;   // logarithm of the real range
     const auto 𝜎b_min = -2.3,   𝜎b_max = 2.3;    // logarithm of the real range
-    const auto 𝜌_min  =  0.0,   𝜌_max  = 0.9;
+    const auto 𝜌_min  =  0.0,   𝜌_max  = 0.999;
     const auto ds_min = -0.69,  ds_max = 1.0986; // logarithm of the real range
 
     // fix the first weight to zero, then use softmax to produce probability weights
