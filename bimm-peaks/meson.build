@@ -37,7 +37,6 @@ executable(
       , calc_hist_dep
       , fmt_dep
       , gsl_dep
-      , libcmaes_dep
       , mdspan_dep
       , omp_dep
       , opencv_dep

@@ -12,8 +12,6 @@
 #include <boost/parser/parser.hpp>
 #include <boost/program_options.hpp>
 
-#include <cmaes.h>
-
 #include <fmt/printf.h>
 
 #include <gsl/gsl_multimin.h>
@@ -44,8 +42,6 @@ namespace fs = std::filesystem;
 namespace po = boost::program_options;
 namespace rs = ranges;
 namespace rv = rs::views;
-
-using namespace libcmaes;
 
 extern template void Field<uint16_t>::load(io::BinIArchive<const char*>&, unsigned);
 extern template void Field<float>::load(io::BinIArchive<const char*>&, unsigned);
@@ -156,7 +152,7 @@ auto gsl_minimize(
         if (pr(iter, cost, size, x)) {
             for (auto i = 0; gsl_step_size->size > i; ++i) {
                 auto step = gsl_vector_get(gsl_step_size.get(), i);
-                step *= 0.95;
+                step *= 0.97;
                 gsl_vector_set(gsl_step_size.get(), i, step);
             }
             status = gsl_multimin_fminimizer_set(s.get(), &minex_func, s->x, gsl_step_size.get());
@@ -470,7 +466,7 @@ int main(int argc, char *argv[]) try {
       , x0
       , step_sizes
       , restart_period * N_batches
-      , 1e-4
+      , 1e-5
       , [&](int iter, double cost, double size, std::span<double> x) {
             print_log(iter, cost, size, x);
 
@@ -487,9 +483,6 @@ int main(int argc, char *argv[]) try {
       );
 
     // Run on the full dataset
-    for (auto &&x : step_sizes) {
-        x *= 0.05;
-    }
     batch_start = 0;
     batch_end   = N * N_batches;
     std::tie(status, res) = gsl_minimize(
