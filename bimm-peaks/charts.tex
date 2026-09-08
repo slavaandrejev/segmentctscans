@@ -1,0 +1,108 @@
+%LTeX: enabled=false
+\documentclass[11pt, twoside, paper = letter, svgnames]{scrartcl}
+
+\usepackage{polyglossia}
+\setdefaultlanguage[variant = american]{english}
+
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{unicode-math}
+\usepackage{mathtools}
+\usepackage{lualatex-math}
+\usepackage{xcolor}
+\usepackage{luacolor}
+\usepackage{scrlayer-scrpage}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{siunitx}
+\usepackage{physics}
+
+\usepgfplotslibrary{colorbrewer}
+\pgfplotsset{
+    compat = 1.18
+  , cycle list/Dark2-8
+  }
+
+\usetikzlibrary{pgfplots.colorbrewer}
+
+\setmainfont{STIX Two Text}
+\setmathfont{STIX Two Math}
+\setmonofont{Libertinus Mono}[Scale = MatchLowercase]
+\setsansfont{Libertinus Sans}[Scale = MatchLowercase]
+
+\KOMAoptions{DIV = 17, fontsize = 11, BCOR = 5mm}
+
+\pagestyle{scrheadings}
+\renewcommand*{\titlepagestyle}{plain.scrheadings}
+
+\begin{document}
+
+\sisetup{round-mode = figures, round-precision = 2}%
+\begin{center}
+    \pgfplotstableread{original-hist.txt}\histfile%
+    \pgfplotstableread{pdf-full.txt}\pdffile%
+    \pgfplotstableread{pdf-00.txt}\pdffilea%
+    \pgfplotstableread{pdf-01.txt}\pdffileb%
+    \pgfplotstableread{pdf-02.txt}\pdffilec%
+    \pgfplotstableread{pdf-00-01.txt}\pdffiled%
+    \pgfplotstableread{pdf-00-02.txt}\pdffilee%
+    \pgfplotstableread{pdf-01-02.txt}\pdffilef%
+    \begin{tikzpicture}
+        \begin{axis}[
+            title             = DRP-395 LQ
+          , width             = 0.9\linewidth
+          , height            = 0.556\linewidth
+          , scale only axis
+          , xlabel            = {Intensity}
+          , ylabel            = {Probability density}
+          , grid              = major
+          , enlargelimits     = false
+          , legend cell align = {left}
+          , legend pos        = north west
+          , no markers
+          ]
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = brightness, y = {ch0}
+                  ] \histfile;
+            \addlegendentry{original}
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = u, y = {pdf}
+                  ] \pdffile;
+            \addlegendentry{Fitted}
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = u, y = {pdf}
+                  ] \pdffilea;
+            \addlegendentry{Phase 0}
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = u, y = {pdf}
+                  ] \pdffileb;
+            \addlegendentry{Phase 1}
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = u, y = {pdf}
+                  ] \pdffilec;
+            \addlegendentry{Phase 2}
+            % \addplot+ [line width = 1.5pt, smooth]
+            %     table [
+            %         x = u, y = {pdf}
+            %       ] \pdffiled;
+            % \addlegendentry{0 and 1 interface}
+            % \addplot+ [line width = 1.5pt, smooth]
+            %     table [
+            %         x = u, y = {pdf}
+            %     ] \pdffilee;
+            % \addlegendentry{0 and 2 interface}
+            % \addplot+ [line width = 1.5pt, smooth]
+            %     table [
+            %         x = u, y = {pdf}
+            %     ] \pdffilef;
+            % \addlegendentry{1 and 2 interface}
+        \end{axis}
+    \end{tikzpicture}
+\end{center}
+
+\end{document}
