@@ -20,6 +20,7 @@
 
 #include <range/v3/algorithm/copy.hpp>
 #include <range/v3/algorithm/sample.hpp>
+#include <range/v3/algorithm/shuffle.hpp>
 #include <range/v3/numeric/accumulate.hpp>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/concat.hpp>
@@ -84,6 +85,7 @@ auto gsl_minimize(
     CostFunc &&func
   , std::span<const double> x_init
   , std::span<const double> step_sizes
+  , size_t max_iter
   , double stop_size
   , ProgressFunc &&pr
   )
@@ -140,7 +142,6 @@ auto gsl_minimize(
         return std::tuple{status, x};
     }
 
-    static auto constexpr max_iter = 10'000;
     for (auto iter = 0; max_iter > iter; ++iter) {
         status = gsl_multimin_fminimizer_iterate(s.get());
         if (0 != status) break;
@@ -152,9 +153,24 @@ auto gsl_minimize(
         for (auto i = 0; x.size() > i; ++i) {
             x[i] = gsl_vector_get(s->x, i);
         }
-        pr(iter, cost, size, x);
+        if (pr(iter, cost, size, x)) {
+            for (auto i = 0; gsl_step_size->size > i; ++i) {
+                auto step = gsl_vector_get(gsl_step_size.get(), i);
+                step *= 0.95;
+                gsl_vector_set(gsl_step_size.get(), i, step);
+            }
+            status = gsl_multimin_fminimizer_set(s.get(), &minex_func, s->x, gsl_step_size.get());
+            if (GSL_SUCCESS != status) {
+                break;
+            }
+        } else if (status != GSL_CONTINUE) {
+            break;
+        }
 
-        if (status != GSL_CONTINUE) break;
+    }
+
+    if (GSL_CONTINUE == status) {
+        status = GSL_SUCCESS;
     }
 
     return std::tuple{status, x};
@@ -169,20 +185,14 @@ int main(int argc, char *argv[]) try {
 
     auto in_file_name             = std::string{};
     auto pdf_name                 = std::string{};
-    auto cmaes_progress_file_name = std::string{};
     auto init_peaks               = LabelsArray{};
-    auto u_start                  = 0.0;
-    auto u_end                    = 0.0;
     auto tail_thr                 = 0.01;
 
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "Input file")
         ("peaks", po::value(&init_peaks)->required(), "Initial peaks")
         ("pdf-name", po::value(&pdf_name), "Base name to write resulting distributions")
-        ("cmaes-pr", po::value(&cmaes_progress_file_name), "Base name to write resulting distributions")
-        ("u-start", po::value(&u_start), "Start of the PDF output range")
-        ("u-end", po::value(&u_end), "End of the PDF output range")
-        ("tailthr", po::value(&tail_thr)->multitoken(), "Threshold to cut the tail of the histogram")
+        ("tailthr", po::value(&tail_thr), "Threshold to cut the tail of the histogram")
       ;
     positional.add("input", 1);
 
@@ -292,15 +302,23 @@ int main(int argc, char *argv[]) try {
     }
     t.stop("Linearize time");
 
-    static auto constexpr N = 20'000;
+    static auto constexpr N              = 10'000;
+    static auto constexpr N_batches      = 100;
+    static auto constexpr restart_period = 100;
 
     auto rd        = std::random_device{};
     auto gen       = std::mt19937{rd()};
-    auto indices   = std::vector<size_t>(N);
-    auto samples_u = std::vector<double>(N);
-    auto samples_v = std::vector<double>(N);
+    auto indices   = std::vector<size_t>(N * N_batches);
+    auto samples_u = std::vector<double>(N * N_batches);
+    auto samples_v = std::vector<double>(N * N_batches);
+
+    if (eligible.size() < indices.size()) {
+        fmt::print(stderr, "Not enough eligible voxels\n");
+        return 1;
+    }
 
     rs::sample(eligible, indices.begin(), indices.size(), gen);
+    rs::shuffle(indices, gen);
     for (auto i = size_t{}; indices.size() > i; ++i) {
         samples_u[i] = linear_u[indices[i]];
         samples_v[i] = linear_v[indices[i]];
@@ -343,10 +361,10 @@ int main(int argc, char *argv[]) try {
 
 
     auto get_labels = [](std::span<const double> a) {
-#if 1
+#if 0
         return gap_set_project(a, 0.1);
 #else
-        return std::vector<double>(a.begin(), a.end());
+        return bc::static_vector<double, max_phases>(a.begin(), a.end());
 #endif
     };
 
@@ -371,6 +389,8 @@ int main(int argc, char *argv[]) try {
         return restr;
     };
 
+    auto batch_start = 0;
+    auto batch_end   = N;
     auto cost_func = [&](std::span<double> x) {
         auto res = 0.0;
 
@@ -379,7 +399,25 @@ int main(int argc, char *argv[]) try {
         auto w  = get_weights({&restr[0], n_weights});
         auto Is = get_labels({&restr[I_start_idx], n_labels});
 
-        for (auto i = 0; N > i; ++i) {
+        auto Z = 0.0;
+        for (auto i = 0; n_labels > i; ++i) {
+            Z += w[i] * M_i(lo_data_thr, hi_data_thr, Is[i], std::exp(restr[𝜎n_idx]));
+        }
+        auto wij = strict_upper_span<const double>{&w[n_labels], n_labels, n_labels};
+        for (auto i = 0; n_labels - 1 > i; ++i) {
+            for (auto j = i + 1; n_labels > j; ++j) {
+                Z += wij[i, j] * M_ij(
+                    lo_data_thr
+                  , hi_data_thr
+                  , Is[i]
+                  , Is[j]
+                  , std::exp(restr[𝜎n_idx])
+                  , std::exp(restr[ds_idx]));
+            }
+        }
+
+        #pragma omp parallel for reduction(+:res) schedule(dynamic)
+        for (auto i = batch_start; batch_end > i; ++i) {
             res += -std::log(full_p(
                 samples_u[i]
               , samples_v[i]
@@ -392,40 +430,77 @@ int main(int argc, char *argv[]) try {
               ));
         }
 
-        return res / N;
+        return res / (batch_end - batch_start) + std::log(Z);
+    };
+
+    auto print_log = [&](int iter, double cost, double size, std::span<double> x) {
+        auto restr = restrict_params(x);
+
+        auto w  = get_weights({&restr[0], n_weights});
+        auto Is = get_labels({&restr[I_start_idx], n_labels});
+        fmt::print("{:5} {:14.9f} {:9.6f} |", iter, cost, size);
+        for (auto i = 0; w.size() > i; ++i) {
+            fmt::print("{:9.6f}", w[i]);
+        }
+        fmt::print(" |");
+        for (auto i = 0; Is.size() > i; ++i) {
+            fmt::print("{:6.3f}", Is[i]);
+        }
+        fmt::print(" |");
+        fmt::print("{:7.4f}", std::exp(restr[𝜎n_idx]));
+        fmt::print("{:7.4f}", std::exp(restr[𝜎b_idx]));
+        fmt::print("{:7.4f}", std::exp(restr[ds_idx]));
+        fmt::print("{:7.4f}\n", restr[𝜌_idx]);
     };
 
     auto inv_sigm = [](double restr, double min, double max) {
         return -std::log((max - min) / (restr - min) - 1.0);
     };
-    auto x0 = std::vector<double>(n_params, 0);
+    auto x0 = bc::static_vector<double, max_params>(n_params, 0);
     for (auto i = 0; n_labels > i; ++i) {
         x0[I_start_idx + i] = inv_sigm((init_peaks.data[i] - lo) / (hi - lo), I_min, I_max);
     }
-    auto step_sizes = std::vector<double>(n_params, 1.0);
+    for (auto i = n_labels - 1; n_weights > i; ++i) {
+        x0[i] = inv_sigm(w_min * 0.99, w_min, w_max); // minimize interface terms
+    }
+    auto batch_count = 0;
+    auto step_sizes = bc::static_vector<double, max_params>(n_params, 1.0);
     auto [status, res] = gsl_minimize(
         cost_func
       , x0
       , step_sizes
-      , 0.001
+      , restart_period * N_batches
+      , 1e-4
       , [&](int iter, double cost, double size, std::span<double> x) {
-            auto restr = restrict_params(x);
+            print_log(iter, cost, size, x);
 
-            auto w  = get_weights({&restr[0], n_weights});
-            auto Is = get_labels({&restr[I_start_idx], n_labels});
-            fmt::print("{:5} {:14.9f} {:9.6f} |", iter, cost, size);
-            for (auto i = 0; w.size() > i; ++i) {
-                fmt::print("{:9.6f}", w[i]);
+            auto change_batch = 0 != iter && 0 == iter % restart_period;
+
+            if (change_batch) {
+                batch_count = (batch_count + 1) % N_batches;
+                batch_start = N * batch_count;
+                batch_end   = batch_start + N;
             }
-            fmt::print(" |");
-            for (auto i = 0; Is.size() > i; ++i) {
-                fmt::print("{:6.3f}", Is[i]);
-            }
-            fmt::print(" |");
-            fmt::print("{:7.4f}", std::exp(restr[𝜎n_idx]));
-            fmt::print("{:7.4f}", std::exp(restr[𝜎b_idx]));
-            fmt::print("{:7.4f}", std::exp(restr[ds_idx]));
-            fmt::print("{:7.4f}\n", restr[𝜌_idx]);
+
+            return change_batch;
+        }
+      );
+
+    // Run on the full dataset
+    for (auto &&x : step_sizes) {
+        x *= 0.05;
+    }
+    batch_start = 0;
+    batch_end   = N * N_batches;
+    std::tie(status, res) = gsl_minimize(
+        cost_func
+      , res
+      , step_sizes
+      , 10'000
+      , 1e-3
+      , [&](int iter, double cost, double size, std::span<double> x) {
+            print_log(iter, cost, size, x);
+            return false;
         }
       );
     if (GSL_SUCCESS != status) {
@@ -435,6 +510,8 @@ int main(int argc, char *argv[]) try {
           );
         return 1;
     }
+
+
     auto restr = restrict_params(res);
 
     fmt::print(
@@ -460,7 +537,7 @@ int main(int argc, char *argv[]) try {
         }
     }
 
-    if (0 != vm.count("pdf-name") && 0 != vm.count("u-start") && 0 != vm.count("u-end")) {
+    if (0 != vm.count("pdf-name")) {
         static auto constexpr steps = 512;
 
         auto full_pdf_file_name = pdf_name + "-full.txt";
@@ -470,18 +547,17 @@ int main(int argc, char *argv[]) try {
           };
         fmt::print(full_pdf_file.get(), "u pdf\n");
 
-        const auto step = (u_end - u_start) / steps;
+        const auto step = (hi_data_thr - lo_data_thr) / steps;
         for (auto i = 0; steps >= i; ++i) {
-            auto u = (u_start + i * step);
-            auto normalized_u = (u - lo) / (hi - lo);
+            auto u = (lo_data_thr + i * step);
             auto pdf = marginal_p(
-                normalized_u
+                u
               , w
               , Is
               , std::exp(restr[𝜎n_idx])
               , std::exp(restr[ds_idx])
               );
-            fmt::print(full_pdf_file.get(), "{} {}\n", u, pdf / (hi - lo));
+            fmt::print(full_pdf_file.get(), "{} {}\n", u * (hi - lo) + lo, pdf / (hi - lo));
         }
         for (auto c = 0; Is.size() > c; ++c) {
             auto pdf_file_name = fmt::format("{}-{:02}.txt", pdf_name, c);
@@ -491,14 +567,13 @@ int main(int argc, char *argv[]) try {
               };
             fmt::print(pdf_file.get(), "u pdf\n");
             for (auto i = 0; steps >= i; ++i) {
-                auto u = (u_start + i * step);
-                auto normalized_u = (u - lo) / (hi - lo);
+                auto u = (lo_data_thr + i * step);
                 auto pdf = w[c] * marginal_p_i(
-                    normalized_u
+                    u
                   , Is[c]
                   , std::exp(restr[𝜎n_idx])
                   );
-                fmt::print(pdf_file.get(), "{} {}\n", u, pdf / (hi - lo));
+                fmt::print(pdf_file.get(), "{} {}\n", u * (hi - lo) + lo, pdf / (hi - lo));
             }
         }
         auto idx = Is.size();
@@ -511,16 +586,15 @@ int main(int argc, char *argv[]) try {
                   };
                 fmt::print(pdf_file.get(), "u pdf\n");
                 for (auto k = 0; steps >= k; ++k) {
-                    auto u = (u_start + k * step);
-                    auto normalized_u = (u - lo) / (hi - lo);
+                    auto u = (lo_data_thr + k * step);
                     auto pdf = w[idx] * marginal_p_ij(
-                        normalized_u
+                        u
                       , Is[i]
                       , Is[j]
                       , std::exp(restr[𝜎n_idx])
                       , std::exp(restr[ds_idx])
                       );
-                    fmt::print(pdf_file.get(), "{} {}\n", u, pdf / (hi - lo));
+                    fmt::print(pdf_file.get(), "{} {}\n", u * (hi - lo) + lo, pdf / (hi - lo));
                 }
                 ++idx;
             }

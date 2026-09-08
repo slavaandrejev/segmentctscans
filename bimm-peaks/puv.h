@@ -41,6 +41,7 @@ auto gsl_integration(double a, double b, double epsabs, double epsrel, F func)
     return std::tuple{status, result, abserr};
 }
 
+inline
 auto full_p_i(double u, double v, double I_i, double log𝜎_n, double 𝜌) {
     static auto constexpr two_root_two_div_pi = 0.9003163161571060695551992;
     auto 𝜎_n2 = std::exp(2 * log𝜎_n);
@@ -49,6 +50,7 @@ auto full_p_i(double u, double v, double I_i, double log𝜎_n, double 𝜌) {
            std::exp(-0.5 * sqr(u - I_i) / 𝜎_n2 - v2 / 𝜎_n2 / (1.0 - 𝜌));
 }
 
+inline
 auto full_p_ij(
     double u
   , double v
@@ -113,6 +115,7 @@ auto full_p_ij(
     return one_two_root_two_pi * v / (ds * 𝜎_n * std::sqrt(a)) * integral;
 }
 
+inline
 auto full_p(
     double u
   , double v
@@ -140,6 +143,7 @@ auto full_p(
     return res;
 };
 
+inline
 auto marginal_p_i(double u, double I_i, double 𝜎_n) {
     static auto constexpr one_root_two_pi = 0.3989422804014326779399461;
 
@@ -148,6 +152,7 @@ auto marginal_p_i(double u, double I_i, double 𝜎_n) {
     );
 }
 
+inline
 auto marginal_p_ij(
     double u
   , double I_i
@@ -189,6 +194,7 @@ auto marginal_p_ij(
     return one_root_two_pi / (2 * ds * 𝜎_n) * integral;
 };
 
+inline
 auto marginal_p(
     double u
   , std::span<const double> w
@@ -211,4 +217,44 @@ auto marginal_p(
     }
 
     return res;
+}
+
+inline
+auto M_i(double lo, double hi, double I_i, double 𝜎_n) {
+    namespace mc = boost::math::double_constants;
+    return 0.5 * (
+        gsl_sf_erf((hi - I_i) / (mc::root_two * 𝜎_n)) -
+        gsl_sf_erf((lo - I_i) / (mc::root_two * 𝜎_n))
+    );
+}
+
+inline
+auto M_ij(double lo, double hi, double I_i, double I_j, double 𝜎_n, double ds) {
+    namespace mc = boost::math::double_constants;
+
+    auto [status, integral, abserr] =
+        gsl_integration(-ds, ds, 1e-10, 1e-6, [&](double t) {
+            auto I = I_i + 0.5 * (I_j - I_i) *
+                (1 + gsl_sf_erf(t / mc::root_two));
+
+            return
+                gsl_sf_erf((hi - I) / (mc::root_two * 𝜎_n)) -
+                gsl_sf_erf((lo - I) / (mc::root_two * 𝜎_n));
+        });
+
+    if (GSL_SUCCESS != status) {
+        fmt::print(stderr,
+            "GSL QAGS failed: {} (status = {})\n"
+            "integral = {}, abserr = {}\n"
+            "I_i ={}, I_j = {}\n"
+            "𝜎_n = {}\n"
+            "ds = {}\n"
+          , gsl_strerror(status), status
+          , integral, abserr
+          , I_i, I_j
+          , 𝜎_n
+          , ds);
+    }
+
+    return integral / (4 * ds);
 }
