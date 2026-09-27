@@ -9,9 +9,30 @@ field_io_lib = static_library(
       }
   )
 
+uv_hist_lib = static_library(
+    'uv_hist'
+  , 'uv-hist-kernel.cpp'
+  , include_directories: project_inc
+  , dependencies: [
+        cuda_dep
+      , cccl_dep
+      ]
+  , cpp_args: [cuda_cpp_args]
+  , build_by_default: false
+  , override_options: cuda_overr_options
+  )
+
+uv_hist_dep = declare_dependency(
+    include_directories: project_inc
+  , link_whole: [
+        uv_hist_lib
+      ]
+  , dependencies: [min_max_dep]
+  )
+
 executable(
-    'bimm-peaks'
-  , 'bimm-peaks.cpp'
+    'uv-hist'
+  , 'uv-hist.cpp'
   , include_directories: project_inc
   , link_whole: [
         field_io_lib
@@ -19,13 +40,12 @@ executable(
       ]
   , dependencies: [
         boost_dep
-      , calc_hist_dep
       , fmt_dep
       , grad_magn_dep
-      , gsl_dep
       , mdspan_dep
       , omp_dep
       , opencv_dep
       , range_dep
+      , uv_hist_dep
       ]
   )
