@@ -30,10 +30,10 @@
 #include <calc_hist.h>
 #include <cuda-context.h>
 #include <field.h>
+#include <grad_magn.h>
 #include <timeop.h>
 
 #include "gap_set_project.h"
-#include "grad_magn.h"
 #include "layout_strict_upper.h"
 #include "puv.h"
 
@@ -135,9 +135,10 @@ auto gsl_minimize(
     auto x = bc::static_vector<double, max_params>(s->x->size);
 
     if (GSL_SUCCESS != status) {
-        return std::tuple{status, x};
+        return std::tuple{status, x, 0.0};
     }
 
+    auto cost = 0.0;
     for (auto iter = 0; max_iter > iter; ++iter) {
         status = gsl_multimin_fminimizer_iterate(s.get());
         if (0 != status) break;
@@ -145,14 +146,14 @@ auto gsl_minimize(
         auto size = gsl_multimin_fminimizer_size(s.get());
         status = gsl_multimin_test_size(size, stop_size);
 
-        auto cost = gsl_multimin_fminimizer_minimum(s.get());
+        cost = gsl_multimin_fminimizer_minimum(s.get());
         for (auto i = 0; x.size() > i; ++i) {
             x[i] = gsl_vector_get(s->x, i);
         }
         if (pr(iter, cost, size, x)) {
             for (auto i = 0; gsl_step_size->size > i; ++i) {
                 auto step = gsl_vector_get(gsl_step_size.get(), i);
-                step *= 0.97;
+                step *= 0.95;
                 gsl_vector_set(gsl_step_size.get(), i, step);
             }
             status = gsl_multimin_fminimizer_set(s.get(), &minex_func, s->x, gsl_step_size.get());
@@ -169,7 +170,7 @@ auto gsl_minimize(
         status = GSL_SUCCESS;
     }
 
-    return std::tuple{status, x};
+    return std::tuple{status, x, cost};
 }
 
 int main(int argc, char *argv[]) try {
@@ -303,7 +304,9 @@ int main(int argc, char *argv[]) try {
     static auto constexpr restart_period = 100;
 
     auto rd        = std::random_device{};
-    auto gen       = std::mt19937{rd()};
+    // auto seed      = 1724410958u;
+    auto seed      = rd();
+    auto gen       = std::mt19937{seed};
     auto indices   = std::vector<size_t>(N * N_batches);
     auto samples_u = std::vector<double>(N * N_batches);
     auto samples_v = std::vector<double>(N * N_batches);
@@ -336,7 +339,7 @@ int main(int argc, char *argv[]) try {
     const auto 𝜎n_min = -7.0,   𝜎n_max = 0.69;   // logarithm of the real range
     const auto 𝜎b_min = -2.3,   𝜎b_max = 2.3;    // logarithm of the real range
     const auto 𝜌_min  =  0.0,   𝜌_max  = 0.999;
-    const auto ds_min = -0.69,  ds_max = 1.0986; // logarithm of the real range
+    const auto ds_min = std::log(0.5), ds_max = std::log(1.5); // logarithm of the real range
 
     // fix the first weight to zero, then use softmax to produce probability weights
     auto get_weights = [](std::span<const double> a) {
@@ -461,7 +464,7 @@ int main(int argc, char *argv[]) try {
     }
     auto batch_count = 0;
     auto step_sizes = bc::static_vector<double, max_params>(n_params, 1.0);
-    auto [status, res] = gsl_minimize(
+    auto [status, res, cost] = gsl_minimize(
         cost_func
       , x0
       , step_sizes
@@ -485,12 +488,12 @@ int main(int argc, char *argv[]) try {
     // Run on the full dataset
     batch_start = 0;
     batch_end   = N * N_batches;
-    std::tie(status, res) = gsl_minimize(
+    std::tie(status, res, cost) = gsl_minimize(
         cost_func
       , res
       , step_sizes
       , 10'000
-      , 1e-3
+      , 1e-4
       , [&](int iter, double cost, double size, std::span<double> x) {
             print_log(iter, cost, size, x);
             return false;
