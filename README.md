@@ -62,12 +62,13 @@ together with the likelihood. In general form, it can be expressed as
     \text{,}
 ```
 
-where $\{E_i\}_{i = 1}^{k}$ is a partition of an open set $\Omega \subset
-\mathbb{R}^d$, $d \geq 2$, into $k$ sets: $E_i \cap E_j = \emptyset$ if $i \neq
-j$, and $\bigcup_{i = 1}^{k}{E_i = \Omega }$ (up to Lebesgue-negligible sets)
-[[3]](#3). $g_i$ in our case is derived from the MLE for the Gaussian noise:
-$g_i(x) = (c_i - x)^2$, where $c_i$ is a "label", the image intensity level for
-the phase $i$.
+where $`\lbrace E_i\rbrace_{i=1}^{k}`$ is a partition of an open set
+$`\Omega \subset \mathbb{R}^d`$, $`d \geq 2`$, into $`k`$ sets:
+$`E_i \cap E_j = \emptyset`$ if $`i \neq j`$, and
+$`\bigcup_{i=1}^{k} E_i = \Omega`$ (up to Lebesgue-negligible sets)
+[[3]](#3). $`g_i`$ in our case is derived from the MLE for the Gaussian noise:
+$`g_i(x) = (c_i - x)^2`$, where $`c_i`$ is a "label", the image intensity level for
+the phase $`i`$.
 
 ## References
 
