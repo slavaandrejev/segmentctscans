@@ -110,11 +110,15 @@ $d$-dimensional vectors on set $K$, defined as
     \text{.}
 ```
 
+$h$ superscript denotes discretization. In particular, $\mathbf{G}^{h}$ is our
+MLE potential for each voxel.
+
 Note that both $\bar{\mathbf{V}}^n$ and $\mathbf{V}^n$ always sum up to 1, and
 $\Xi^{n}$ always sum up to a zero vector for each voxel. Finally, $\tau$ and
 $\tau'$ are step sizes. The algorithm converges as long as $\tau \tau' < 1 / 12$
-(for $d = 3$). The only question the remains to answer is how to find our labels
-$c_i$.
+(for $d = 3$).
+
+The only question that remains to answer is how to find our labels $c_i$.
 
 ## How to find labels
 
