@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 #include <random>
+#include <system_error>
 #include <vector>
 
 #include <boost/container/static_vector.hpp>
@@ -507,7 +508,6 @@ int main(int argc, char *argv[]) try {
         return 1;
     }
 
-
     auto restr = restrict_params(res);
 
     fmt::print(
@@ -541,6 +541,12 @@ int main(int argc, char *argv[]) try {
             fopen(full_pdf_file_name.c_str(), "wt")
           , &fclose
           };
+        if (!full_pdf_file) {
+            throw std::system_error(
+                errno
+              , std::system_category()
+              , fmt::format("Cannot open {}\n", full_pdf_file_name).c_str());
+        }
         fmt::print(full_pdf_file.get(), "u pdf\n");
 
         const auto step = (hi_data_thr - lo_data_thr) / steps;
@@ -561,6 +567,12 @@ int main(int argc, char *argv[]) try {
                 fopen(pdf_file_name.c_str(), "wt")
               , &fclose
               };
+            if (!pdf_file) {
+                throw std::system_error(
+                    errno
+                  , std::system_category()
+                  , fmt::format("Cannot open {}\n", pdf_file_name).c_str());
+            }
             fmt::print(pdf_file.get(), "u pdf\n");
             for (auto i = 0; steps >= i; ++i) {
                 auto u = (lo_data_thr + i * step);
@@ -580,6 +592,12 @@ int main(int argc, char *argv[]) try {
                     fopen(pdf_file_name.c_str(), "wt")
                   , &fclose
                   };
+                if (!pdf_file) {
+                    throw std::system_error(
+                        errno
+                      , std::system_category()
+                      , fmt::format("Cannot open {}\n", pdf_file_name).c_str());
+                }
                 fmt::print(pdf_file.get(), "u pdf\n");
                 for (auto k = 0; steps >= k; ++k) {
                     auto u = (lo_data_thr + k * step);
