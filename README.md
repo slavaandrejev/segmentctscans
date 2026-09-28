@@ -70,7 +70,10 @@ $E _ i \cap E _ j = \emptyset$ if $i \neq j$, and $\bigcup _ {i=1}^{k} E _ i = \
 (up to Lebesgue-negligible sets) [[3]](#3). $g _ i$ in our case is derived from the MLE
 for the Gaussian noise: $g _ i(x) = \lambda (c _ i - u(x))^2 $, where $c _ i$ is a
 “label”, the image intensity level for the phase $i$, $u(x)$ is our image, and
-$\lambda$ is the weight we assign to our data.
+$\lambda$ is the weight we assign to our data. $\mathop{\mathrm{Per}}\nolimits$
+is a generalization of the set “perimeter”. It is defined as the total variation of the
+set $E _ i$ characteristic function $\chi _ {E _ i}$. For the details, see
+equations (2)–(5) and (10) in Chambolle et al. (2012) [[3]](#3).
 
 The optimization problem ([1](#eq-potts)) is not easy to solve. Chambolle et al.
 (2012) suggested a tight convex relaxation of this problem [[3]](#3). In other
