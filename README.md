@@ -39,7 +39,7 @@ the CT scan. The scan axis is horizontal.
 
 <p align="center">
   <picture>
-    <img alt="SLice from the original LQ dataset" src="docs/DRP-395-LQ, slice-400 (𝜆 = 000.000).png" width="670px">
+    <img alt="SLice from the original LQ dataset" src="docs/DRP-395-LQ, slice-400.png" width="670px">
   </picture>
 </p>
 
