@@ -50,7 +50,7 @@ our data image should consist of regions of uniform intensity. This type of
 assumption is called the Potts model. Then we will try to maximize our prior
 together with the likelihood. In general form, it can be expressed as
 
-$$
+```math
     \min_{\left\{ E_ i\right\}^k_{i = 1}}{\left[
         \frac{1}{2}\sum_{i = 1}^k{
             \mathop{\mathrm{Per}}\nolimits{\left(E_i; \Omega\right)}
@@ -60,7 +60,7 @@ $$
         } \right]
     }
     \text{,}
-$$
+```
 
 where $\{E_i\}_{i = 1}^{k}$ is a partition of an open set $\Omega \subset
 \mathbb{R}^d$, $d \geq 2$, into $k$ sets: $E_i \cap E_j = \emptyset$ if $i \neq
