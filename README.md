@@ -50,6 +50,7 @@ our data image should consist of regions of uniform intensity. This type of
 assumption is called the Potts model. Then we will try to maximize our prior
 together with the likelihood. In general form, it can be expressed as
 
+<a name="eq-potts"></a>
 ```math
     \min_{\left\{ E_ i\right\}^k_{i = 1}}{\left[
         \frac{1}{2}\sum_{i = 1}^k{
@@ -60,6 +61,7 @@ together with the likelihood. In general form, it can be expressed as
         } \right]
     }
     \text{,}
+    \qquad\text{(1)}
 ```
 
 where $`\lbrace E_i\rbrace_{i=1}^{k}`$ is a partition of an open set
@@ -69,6 +71,52 @@ $`\bigcup_{i=1}^{k} E_i = \Omega`$ (up to Lebesgue-negligible sets)
 [[3]](#3). $`g_i`$ in our case is derived from the MLE for the Gaussian noise:
 $`g_i(x) = (c_i - x)^2`$, where $`c_i`$ is a "label", the image intensity level for
 the phase $`i`$.
+
+The optimization problem ([1](#eq-potts)) is not easy to solve. Chambolle et al.
+(2012) suggested a tight convex relaxation of this problem [[3]](#3). In other
+words, they simplified the functional in ([1](#eq-potts)) just enough to make it
+relatively easy to solve. They introduce the following notations. $\Xi$ denotes
+$k$ $d$-dimensional vectors for every voxel, where $k$ is the number of labels
+or phases in our CT scan, and $d = 3$ is the dimension of our data.
+$\bar{\mathbf{V}}$ and $\mathbf{V}$ each represent $k$ values for each voxel. We
+want to find $\mathbf{V}$. Its $k$ values are positive numbers $\in [0, 1]$ that
+some up to 1. The maximum number defines the label of the voxel. Chambolle et
+al. (2012) build the following iterative procedure. First, they initialize
+$\Xi^0 = 0$, $\bar{\mathbf{V}}^0 = \mathbf{V}^0 = 0$. Then they iteratively
+update these values for each voxel:
+
+```math
+    \begin{aligned}
+        \Xi^{n + 1} = & \Pi_{K}\left(
+            \Xi^{n} + \tau'\left(\nabla^h{\bar{\mathbf{V}}^n}\right)
+        \right)\text{,}\\
+        \mathbf{V}^{n + 1} = & \Pi_{S}\left(
+            \mathbf{V}^{n} + \tau \left(\left(\mathop{\mathrm{div}}\nolimits^h{\Xi^{n + 1}}\right) - \mathbf{G}^{h}\right)
+        \right)\text{,}\\
+        \bar{\mathbf{V}}^{{n + 1}} = & 2 \mathbf{V}^{n + 1} - \mathbf{V}^n
+        \text{.}
+    \end{aligned}
+
+```
+$\Pi_{S}$ is a projection of $k$ values on a simplex, i.e. $`v_i \in [0, 1]`$
+and $`\sum_{i = 1}^k{v_i} = 1`$. $\Pi_{K}$ is a projection of $k$
+$d$-dimensional vectors on set $K$, defined as
+
+```math
+    K = \left\{
+        \mathbf{q} = \left(q_1, \ldots, q_k\right)^{T} \in \mathbb{R}^{k \times d}:
+            \left\lvert q_i - q_j\right\rvert \leqslant 1 \ \forall i < j
+    \right\}
+    \text{.}
+```
+
+Note that both $\bar{\mathbf{V}}^n$ and $\mathbf{V}^n$ always sum up to 1, and
+$\Xi^{n}$ always sum up to a zero vector for each voxel. Finally, $\tau$ and
+$\tau'$ are step sizes. The algorithm converges as long as $\tau \tau' < 1 / 12$
+(for $d = 3$). The only question the remains to answer is how to find our labels
+$c_i$.
+
+## How to find labels
 
 ## References
 
