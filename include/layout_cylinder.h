@@ -133,6 +133,21 @@ struct layout_cylinder {
           , base_(other.csc.base_, other.csc.base_ + ext_.extent(2) + 1)
         {}
 
+        // same mapping with changed first extent
+        mapping_storage(const layout_type::mapping<extents_type> &other, index_type slab_w, index_type nstride)
+          : ext_{slab_w, other.ext_.extent(1), other.ext_.extent(2)}
+          , nstride_{nstride}
+          , col_begin_{other.col_begin_}
+          , col_end_{other.col_end_}
+          , data_size_{other.data_size_ / other.ext_.extent(0) * slab_w}
+          , start_row_(other.csc.start_row_, other.csc.start_row_ + ext_.extent(2))
+        {
+            base_.resize(size_t(ext_.extent(2)) + 1);
+            for (auto col = size_t{}; base_.size() > col; ++col) {
+                base_[col] = (other.csc.base_[col] / other.nstride_) * nstride_;
+            }
+        }
+
         // Extents are: number of images, rows and columns in the original TIFF
         mapping_storage(const Extents &e, double xc, double yc, double r, index_type nstride)
           : ext_{e}

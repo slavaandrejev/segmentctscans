@@ -32,6 +32,7 @@
 
 #include <cuda/std/array>
 
+#include <fmt/color.h>
 #include <fmt/printf.h>
 
 #include <range/v3/range/conversion.hpp>
@@ -57,22 +58,26 @@ struct init_v_kernel {
     __device__
     void operator()(
         Config config
-      , layout_cylinder::mapping<Extents> m
+      , layout_cylinder::mapping<Extents> input_mapping
+      , layout_cylinder::mapping<Extents> slab_mapping
       , const float *g
       , cuda::std::array<float *, sizeof...(Xn) - 1> V
       , cuda::std::array<float *, sizeof...(Xn) - 1> V_bar
       , const hana::tuple<Xn...> ci
+      , int slab_start
+      , int slab_end
       )
     {
         auto b   = cuda::block.index(cuda::grid, config);
-        auto col = m.col_begin() + b.z;
+        auto col = slab_mapping.col_begin() + b.z;
         auto row = b.y;
-        if (m.row_begin(col) <= row && row < m.row_end(col)) {
-            auto n = cuda::gpu_thread.index(cuda::grid, config).x;
+        if (slab_mapping.row_begin(col) <= row && row < slab_mapping.row_end(col)) {
+            auto n = slab_start + cuda::gpu_thread.index(cuda::grid, config).x;
 
-            if (m.n_images() > n) {
-                auto offset = m(n, row, col);
-                auto v = g[offset];
+            if (slab_end > n) {
+                auto input_offset = input_mapping(n, row, col);
+                auto work_offset  = slab_mapping(n - slab_start, row, col);
+                auto v = g[input_offset];
                 auto [min_𝛿, cluster] = hana::fold(
                     hana::make_range(0_c, hana::size_c<sizeof...(Xn)>)
                   , std::tuple{std::numeric_limits<decltype(v)>::max(), 0}
@@ -81,7 +86,7 @@ struct init_v_kernel {
                         return 𝛿 < std::get<0>(acc) ? std::tuple{𝛿, int(k)} : acc;
                   });
                 for (auto i = 0; int(V.size()) > i; ++i) {
-                    V_bar[i][offset] = V[i][offset] = i == cluster ? 1.0f : 0.0f;
+                    V_bar[i][work_offset] = V[i][work_offset] = i == cluster ? 1.0f : 0.0f;
                 }
             }
         }
@@ -93,10 +98,12 @@ struct grad_kernel {
     __device__
     void operator()(
         Config config
-      , layout_cylinder::mapping<Extents> m
+      , layout_cylinder::mapping<Extents> slab_mapping
       , cuda::std::array<float *, 3 * Km1> xi
       , cuda::std::array<float *, Km1> V_bar
       , float 𝜏2
+      , int slab_start
+      , int slab_end
       )
     {
         using index_type = layout_cylinder::mapping<Extents>::index_type;
@@ -104,25 +111,25 @@ struct grad_kernel {
         static constexpr auto K = Km1 + 1;
 
         auto b   = cuda::block.index(cuda::grid, config);
-        auto col = m.col_begin() + b.z;
+        auto col = slab_mapping.col_begin() + b.z;
         auto row = b.y;
-        if (m.row_begin(col) <= row && row < m.row_end(col)) {
-            auto n = cuda::gpu_thread.index(cuda::grid, config).x;
+        if (slab_mapping.row_begin(col) <= row && row < slab_mapping.row_end(col)) {
+            auto n = slab_start + cuda::gpu_thread.index(cuda::grid, config).x;
 
-            if (m.n_images() > n) {
-                auto offset = m(n, row, col);
+            if (slab_end > n) {
+                auto work_offset  = slab_mapping(n - slab_start, row, col);
                 auto next_img_ofs = index_type{};
                 auto next_row_ofs = index_type{};
                 auto next_col_ofs = index_type{};
 
-                if (m.n_images() - 1 > n) {
-                    next_img_ofs = m(n + 1, row, col);
+                if (slab_end - 1 > n) {
+                    next_img_ofs = slab_mapping(n + 1 - slab_start, row, col);
                 }
-                if (m.row_end(col) - 1 > row) {
-                    next_row_ofs = m(n, row + 1, col);
+                if (slab_mapping.row_end(col) - 1 > row) {
+                    next_row_ofs = slab_mapping(n - slab_start, row + 1, col);
                 }
-                if (m.col_end() - 1 > col && m.row_begin(col + 1) <= row && row < m.row_end(col + 1)) {
-                    next_col_ofs = m(n, row, col + 1);
+                if (slab_mapping.col_end() - 1 > col && slab_mapping.row_begin(col + 1) <= row && row < slab_mapping.row_end(col + 1)) {
+                    next_col_ofs = slab_mapping(n - slab_start, row, col + 1);
                 }
 
                 auto vk = 1.0f, vk_n = 1.0f, vk_r = 1.0f, vk_c = 1.0f;
@@ -137,12 +144,12 @@ struct grad_kernel {
                     static constexpr auto i = hana::llong_c<decltype(I)::value>;
 
                     if constexpr (hana::llong_c<K> - 1_c > i) {
-                        vi = V_bar[i][offset];
+                        vi = V_bar[i][work_offset];
                         vk -= vi;
                     } else {
                         vi = vk;
                     }
-                    if (m.n_images() - 1 > n) {
+                    if (slab_end - 1 > n) {
                         if constexpr (hana::llong_c<K> - 1 > i) {
                             vi_n = V_bar[i][next_img_ofs];
                             vk_n -= vi_n;
@@ -152,7 +159,7 @@ struct grad_kernel {
                         q[3_c * i] = vi_n - vi;
                     }
 
-                    if (m.row_end(col) - 1 > row) {
+                    if (slab_mapping.row_end(col) - 1 > row) {
                         if constexpr (hana::llong_c<K> - 1_c > i) {
                             vi_r = V_bar[i][next_row_ofs];
                             vk_r -= vi_r;
@@ -162,7 +169,7 @@ struct grad_kernel {
                         q[3_c * i + 1_c] = vi_r - vi;
                     }
 
-                    if (m.col_end() - 1 > col && m.row_begin(col + 1) <= row && row < m.row_end(col + 1)) {
+                    if (slab_mapping.col_end() - 1 > col && slab_mapping.row_begin(col + 1) <= row && row < slab_mapping.row_end(col + 1)) {
                         if constexpr (hana::llong_c<K> - 1_c > i) {
                             vi_c = V_bar[i][next_col_ofs];
                             vk_c -= vi_c;
@@ -174,7 +181,7 @@ struct grad_kernel {
 
                     if constexpr (hana::llong_c<K> - 1_c > i) {
                         xi_i = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...axis) {
-                            return hana::make_tuple(xi[i * 3_c + axis][offset]...);
+                            return hana::make_tuple(xi[i * 3_c + axis][work_offset]...);
                         });
                         hana::for_each(hana::make_range(0_c, 3_c), [&](auto axis) {
                             xi_k[axis] -= xi_i[axis];
@@ -230,9 +237,9 @@ struct grad_kernel {
                     }
                 }
                 hana::for_each(hana::make_range(0_c, hana::llong_c<K - 1>), [&](auto i) {
-                    xi[i * 3_c      ][offset] = q[3_c * i];
-                    xi[i * 3_c + 1_c][offset] = q[3_c * i + 1_c];
-                    xi[i * 3_c + 2_c][offset] = q[3_c * i + 2_c];
+                    xi[i * 3_c      ][work_offset] = q[3_c * i];
+                    xi[i * 3_c + 1_c][work_offset] = q[3_c * i + 1_c];
+                    xi[i * 3_c + 2_c][work_offset] = q[3_c * i + 2_c];
                 });
             }
         }
@@ -343,13 +350,16 @@ struct div_kernel {
     __device__
     void operator()(
         Config config
-      , layout_cylinder::mapping<Extents> m
+      , layout_cylinder::mapping<Extents> input_mapping
+      , layout_cylinder::mapping<Extents> slab_mapping
       , const float *g
       , cuda::std::array<float *, 3 * (sizeof...(Xn) - 1)> xi
       , cuda::std::array<float *, sizeof...(Xn) - 1> V
       , cuda::std::array<float *, sizeof...(Xn) - 1> V_bar
       , const hana::tuple<Xn...> ci
       , float 𝜆, float 𝜏1
+      , int slab_start
+      , int slab_end
       , cuda::std::span<float> max_delta_q
       )
     {
@@ -361,26 +371,27 @@ struct div_kernel {
         __shared__ typename BlockReduce::TempStorage temp;
 
         auto b   = cuda::block.index(cuda::grid, config);
-        auto col = m.col_begin() + b.z;
+        auto col = slab_mapping.col_begin() + b.z;
         auto row = b.y;
         auto Δq  = 0.0f;
-        if (m.row_begin(col) <= row && row < m.row_end(col)) {
-            auto n = cuda::gpu_thread.index(cuda::grid, config).x;
+        if (slab_mapping.row_begin(col) <= row && row < slab_mapping.row_end(col)) {
+            auto n = slab_start + cuda::gpu_thread.index(cuda::grid, config).x;
 
-            if (m.n_images() > n) {
-                auto offset = m(n, row, col);
+            if (slab_end > n) {
+                auto input_offset = input_mapping(n, row, col);
+                auto work_offset  = slab_mapping(n - slab_start, row, col);
                 auto prev_img_ofs = index_type{};
                 auto prev_row_ofs = index_type{};
                 auto prev_col_ofs = index_type{};
 
-                if (0 < n) {
-                    prev_img_ofs = m(n - 1, row, col);
+                if (slab_start < n) {
+                    prev_img_ofs = slab_mapping(n - 1 - slab_start, row, col);
                 }
-                if (m.row_begin(col) < row) {
-                    prev_row_ofs = m(n, row - 1, col) ;
+                if (slab_mapping.row_begin(col) < row) {
+                    prev_row_ofs = slab_mapping(n - slab_start, row - 1, col) ;
                 }
-                if (m.col_begin() < col && m.row_begin(col - 1) <= row && row < m.row_end(col - 1)) {
-                    prev_col_ofs = m(n, row, col - 1);
+                if (slab_mapping.col_begin() < col && slab_mapping.row_begin(col - 1) <= row && row < slab_mapping.row_end(col - 1)) {
+                    prev_col_ofs = slab_mapping(n - slab_start, row, col - 1);
                 }
 
                 auto q  = hana::replicate<hana::tuple_tag>(0.0f, hana::size_c<K>);
@@ -402,7 +413,7 @@ struct div_kernel {
 
                     if constexpr (hana::llong_c<K> - 1_c > i) {
                         xi_i = hana::unpack(hana::make_range(0_c, 3_c), [&](auto ...axis) {
-                            return hana::make_tuple(xi[i * 3_c + axis][offset]...);
+                            return hana::make_tuple(xi[i * 3_c + axis][work_offset]...);
                         });
                         hana::for_each(hana::make_range(0_c, 3_c), [&](auto axis) {
                             xi_k[axis] -= xi_i[axis];
@@ -411,7 +422,7 @@ struct div_kernel {
                         xi_i = xi_k;
                     }
 
-                    if (0 < n) {
+                    if (slab_start < n) {
                         if constexpr (hana::llong_c<K> - 1_c > i) {
                             xi_i_n = xi[i * 3_c][prev_img_ofs];
                             xi_k_n -= xi_i_n;
@@ -420,9 +431,9 @@ struct div_kernel {
                         }
                         div -= xi_i_n;
                     }
-                    if (m.n_images() - 1 > n) div += xi_i[0_c];
+                    if (slab_end - 1 > n) div += xi_i[0_c];
 
-                    if (m.row_begin(col) < row) {
+                    if (slab_mapping.row_begin(col) < row) {
                         if constexpr (hana::llong_c<K> - 1_c > i) {
                             xi_i_r = xi[i * 3_c + 1_c][prev_row_ofs];
                             xi_k_r -= xi_i_r;
@@ -431,9 +442,9 @@ struct div_kernel {
                         }
                         div -= xi_i_r;
                     }
-                    if (m.row_end(col) - 1 > row) div += xi_i[1_c];
+                    if (slab_mapping.row_end(col) - 1 > row) div += xi_i[1_c];
 
-                    if (m.col_begin() < col && m.row_begin(col - 1) <= row && row < m.row_end(col - 1)) {
+                    if (slab_mapping.col_begin() < col && slab_mapping.row_begin(col - 1) <= row && row < slab_mapping.row_end(col - 1)) {
                         if constexpr (hana::llong_c<K> - 1_c > i) {
                             xi_i_c = xi[i * 3_c + 2_c][prev_col_ofs];
                             xi_k_c -= xi_i_c;
@@ -442,23 +453,23 @@ struct div_kernel {
                         }
                         div -= xi_i_c;
                     }
-                    if (m.col_end() - 1 > col && m.row_begin(col + 1) <= row && row < m.row_end(col + 1))
+                    if (slab_mapping.col_end() - 1 > col && slab_mapping.row_begin(col + 1) <= row && row < slab_mapping.row_end(col + 1))
                         div += xi_i[2_c];
 
                     if constexpr (hana::llong_c<K> - 1_c> i) {
-                        vi = V[i][offset];
+                        vi = V[i][work_offset];
                         vk -= vi;
                     } else {
                         vi = vk;
                     }
 
                     v[i] = vi;
-                    q[i] = vi + 𝜏1 * (div - 𝜆 * sqr(g[offset] - ci[i]));
+                    q[i] = vi + 𝜏1 * (div - 𝜆 * sqr(g[input_offset] - ci[i]));
                 });
                 q = project_simplex(q);
                 hana::for_each(hana::make_range(0_c, hana::llong_c<K - 1>), [&](auto i) {
-                    V_bar[i][offset] = 2 * q[i] - v[i];
-                    V[i][offset] = q[i];
+                    V_bar[i][work_offset] = 2 * q[i] - v[i];
+                    V[i][work_offset] = q[i];
                 });
                 Δq = hana::fold(
                     hana::make_range(0_c, hana::llong_c<K>)
@@ -482,30 +493,35 @@ struct update_kernel {
     __device__
     void operator()(
         Config config
-      , layout_cylinder::mapping<Extents> m
-      , float *g
+      , layout_cylinder::mapping<Extents> output_mapping
+      , layout_cylinder::mapping<Extents> slab_mapping
+      , float *res
       , cuda::std::array<float *, K> V
       , const cuda::std::span<float> ci
+      , int slab_start
+      , int res_start
+      , int res_end
       )
     {
         const auto k = int(V.size()) + 1;
 
         auto b   = cuda::block.index(cuda::grid, config);
-        auto col = m.col_begin() + b.z;
+        auto col = slab_mapping.col_begin() + b.z;
         auto row = b.y;
-        if (m.row_begin(col) <= row && row < m.row_end(col)) {
-            auto n = cuda::gpu_thread.index(cuda::grid, config).x;
+        if (slab_mapping.row_begin(col) <= row && row < slab_mapping.row_end(col)) {
+            auto n = res_start + cuda::gpu_thread.index(cuda::grid, config).x;
 
-            if (m.n_images() > n) {
-                auto offset = m(n, row, col);
-#if 1
+            if (res_end > n) {
+                auto output_offset = output_mapping(n, row, col);
+                auto work_offset   = slab_mapping(n - slab_start, row, col);
+
                 auto v  = 0.0f;
                 auto vk = 1.0f;
                 auto vi = 0.0f;
                 auto max_label = 0;
                 for (auto i = 0; k > i; ++i) {
                     if (k - 1 > i) {
-                        vi = V[i][offset];
+                        vi = V[i][work_offset];
                         vk -= vi;
                     } else {
                         vi = vk;
@@ -515,31 +531,17 @@ struct update_kernel {
                         max_label = i;
                     }
                 }
-                g[offset] = ci[max_label];
-#else
-                auto v  = 0.0f;
-                auto vk = 1.0f;
-                auto vi = 0.0f;
-                for (auto i = 0; k > i; ++i) {
-                    if (k - 1 > i) {
-                        vi = V[i][n, row, col];
-                        vk -= vi;
-                    } else {
-                        vi = vk;
-                    }
-                    v += vi * ci[i];
-                }
-                g[n, row, col] = v;
-#endif
+                res[output_offset] = ci[max_label];
             }
         }
     }
 };
 
 template <size_t K>
-void potts_min_partition(
+device_field_ptr<float> potts_min_partition(
     CudaContext &ctx
   , DeviceField<float> &g
+  , const Field<float>::mapping_type &cpu_map
   , std::array<float, K> ci
   , float 𝜆, float 𝜏1, float 𝜏2
   , int iters
@@ -549,29 +551,54 @@ void potts_min_partition(
     // be passed to a kernel by value
     auto mapping = g.mapping();
 
+    auto res = device_field_ptr<float>{
+        new DeviceField<float>{mapping, ctx.stream(), ctx.mr()}
+      };
+
     static auto constexpr d = 3;
+
+    const auto [available_memory, total] = device_memory(ctx);
+
+    const auto n    = int(mapping.n_images());
+    const auto halo = int(iters);
+    const auto s    = mapping.required_span_size() / mapping.nstride();
+
+    const auto bytes_per_slice = sizeof(float) * s * (d + 2) * (K - 1);
+
+    const auto slab_w = int(Field<float>::prev_stride(available_memory / bytes_per_slice));
+    const auto res_w  = slab_w - 2 * halo;
+
+    if (n > slab_w && res_w <= 0) {
+        fmt::print(
+            fmt::fg(fmt::color::light_coral) | fmt::emphasis::bold
+          , "Not enought memory. Reduce the mask radius or the number of iterations.\n"
+          );
+        return {};
+    }
+
+    auto slab_map_st    = layout_cylinder::mapping_storage(cpu_map, slab_w, Field<float>::get_stride(slab_w));
+    auto slab_map       = slab_map_st.mapping();
+    auto d_slab_map_tbl = slab_map.device_tables(ctx.stream(), ctx.mr());
+    auto d_slab_map     = slab_map.with_tables(d_slab_map_tbl.csc());
 
     // Vector fields for each pixel and each but one label. They sum up to zero,
     // so need K - 1 components.
     auto Ξ = hana::unpack(hana::make_range(0_c, hana::llong_c<d * (K - 1)>), [&](auto ...k) {
         return std::array<cuda::device_buffer<float>, d * (K - 1)>{{
-            (void(k), cuda::device_buffer<float>{ctx.stream(), ctx.mr(), mapping.required_span_size(), cuda::no_init})...
+            (void(k), cuda::device_buffer<float>{ctx.stream(), ctx.mr(), slab_map.required_span_size(), cuda::no_init})...
         }};
     });
     // V and V_bar sum up to one, so need K - 1 components.
     auto V = hana::unpack(hana::make_range(0_c, hana::llong_c<K - 1>), [&](auto ...k) {
         return std::array<cuda::device_buffer<float>, K - 1>{{
-            (void(k), cuda::device_buffer<float>{ctx.stream(), ctx.mr(), mapping.required_span_size(), cuda::no_init})...
+            (void(k), cuda::device_buffer<float>{ctx.stream(), ctx.mr(), slab_map.required_span_size(), cuda::no_init})...
         }};
     });
     auto V_bar = hana::unpack(hana::make_range(0_c, hana::llong_c<K - 1>), [&](auto ...k) {
         return std::array<cuda::device_buffer<float>, K - 1>{{
-            (void(k), cuda::device_buffer<float>{ctx.stream(), ctx.mr(), mapping.required_span_size(), cuda::no_init})...
+            (void(k), cuda::device_buffer<float>{ctx.stream(), ctx.mr(), slab_map.required_span_size(), cuda::no_init})...
         }};
     });
-    for (auto &&𝜉 : Ξ) {
-        cuda::fill_bytes(ctx.stream(), 𝜉, 0.0f);
-    }
     for (auto &&v : V) {
         cuda::fill_bytes(ctx.stream(), v, 0.0f);
     }
@@ -593,39 +620,62 @@ void potts_min_partition(
     auto ci_tuple = hana::unpack(ci, [&](auto ...c) {
         return hana::make_tuple(c...);
     });
-
-    auto config = cuda::make_config(
-        cuda::grid_dims(dim3{
-            (mapping.nstride() + (threads_per_block - 1)) / threads_per_block
-          , mapping.extents().extent(1)
-          , mapping.col_end() - mapping.col_begin()
-          })
-      , cuda::block_dims<threads_per_block>());
+    auto d_ci = cuda::device_buffer<float>{ctx.stream(), ctx.mr(), ci};
 
     auto d_maxΔq = cuda::device_buffer<float>{ctx.stream(), ctx.mr(), 1, cuda::no_init};
 
-    // auto f = std::unique_ptr<FILE, decltype(&fclose)>{
-    //     fopen("maxΔq.txt", "wt")
-    //   , &fclose
-    //   };
-    // fmt::print(f.get(), "iter dqmax\n");
+    const auto n_slabs = n <= slab_w ? int{1} : 1 + (n - slab_w + res_w - 1) / res_w;
+    for (auto n_slab = 0; n_slabs > n_slab; ++n_slab) {
+        const auto slab_start = n_slab * res_w;
+        const auto slab_end   = std::min(int(mapping.n_images()), slab_start + slab_w);
 
-    cuda::launch(ctx.stream(), config, init_v_kernel{}, mapping, g.data(), V_ptrs, V_bar_ptrs, ci_tuple);
-    for (auto n_iter = int{}; iters > n_iter; ++n_iter) {
-        cuda::launch(ctx.stream(), config, grad_kernel{}, mapping, Ξ_ptrs, V_bar_ptrs, 𝜏2);
+        auto slab_cfg = cuda::make_config(
+            cuda::grid_dims(dim3{
+                ((unsigned int)(slab_end - slab_start) + (threads_per_block - 1)) / threads_per_block
+              , mapping.extents().extent(1)
+              , mapping.col_end() - mapping.col_begin()
+              })
+          , cuda::block_dims<threads_per_block>());
 
-        cuda::fill_bytes(ctx.stream(), d_maxΔq, 0);
-        cuda::launch(ctx.stream(), config, div_kernel{}, mapping, g.data(), Ξ_ptrs, V_ptrs, V_bar_ptrs, ci_tuple, 𝜆, 𝜏1, d_maxΔq);
+        // Process [slab_start, slab_end)
+        cuda::launch(
+            ctx.stream(), slab_cfg, init_v_kernel{}, mapping, d_slab_map
+          , g.data(), V_ptrs, V_bar_ptrs, ci_tuple, slab_start, slab_end);
+        for (auto &&𝜉 : Ξ) { cuda::fill_bytes(ctx.stream(), 𝜉, 0.0f); }
+        for (auto n_iter = int{}; iters > n_iter; ++n_iter) {
+            cuda::launch(ctx.stream(), slab_cfg, grad_kernel{}, d_slab_map, Ξ_ptrs, V_bar_ptrs, 𝜏2, slab_start, slab_end);
 
-        auto maxΔq = 0.0f;
-        cuda::copy_bytes(ctx.stream(), d_maxΔq, cuda::std::span{&maxΔq, 1});
-        ctx.stream().sync();
+            cuda::fill_bytes(ctx.stream(), d_maxΔq, 0);
+            cuda::launch(
+                ctx.stream(), slab_cfg, div_kernel{}, mapping, d_slab_map
+              , g.data(), Ξ_ptrs, V_ptrs, V_bar_ptrs, ci_tuple, 𝜆, 𝜏1
+              , slab_start, slab_end, d_maxΔq);
 
-        fmt::print("{} {:.6g}\n", n_iter, std::sqrt(maxΔq));
-        // fmt::print(f.get(), "{} {:.6g}\n", n_iter, std::sqrt(maxΔq));
+            auto maxΔq = 0.0f;
+            cuda::copy_bytes(ctx.stream(), d_maxΔq, cuda::std::span{&maxΔq, 1});
+            ctx.stream().sync();
+
+            fmt::print("Slab = {:4}, iteration = {:4}, Δq = {:.6g}   \r", n_slab, n_iter, std::sqrt(maxΔq));
+            fflush(stdout);
+        }
+
+        // Write the slab without the halo
+        const auto result_start =                  0 == slab_start ? slab_start : slab_start + halo;
+        const auto result_end   = mapping.n_images() == slab_end   ? slab_end   : slab_end   - halo;
+        auto upd_cfg = cuda::make_config(
+            cuda::grid_dims(dim3{
+                ((unsigned int)(result_end - result_start) + (threads_per_block - 1)) / threads_per_block
+              , mapping.extents().extent(1)
+              , mapping.col_end() - mapping.col_begin()
+              })
+          , cuda::block_dims<threads_per_block>());
+        cuda::launch(
+            ctx.stream(), upd_cfg, update_kernel{}, mapping, d_slab_map
+          , res->data(), V_ptrs, d_ci, slab_start, result_start, result_end);
     }
-    auto d_ci = cuda::device_buffer<float>{ctx.stream(), ctx.mr(), ci};
-    cuda::launch(ctx.stream(), config, update_kernel{}, mapping, g.data(), V_ptrs, d_ci);
+    fmt::print("\n");
+
+    return res;
 }
 
 template <std::size_t... Ks>

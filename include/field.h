@@ -27,15 +27,25 @@ public:
     using element_type = ElementType;
     using extents_type = std::dextents<uint32_t, 3>;
     using mdspan_type  = std::mdspan<element_type, extents_type, layout_cylinder>;
+    using mapping_type = mdspan_type::mapping_type;
     using value_type   = mdspan_type::value_type;
     using index_type   = mdspan_type::index_type;
     using reference    = mdspan_type::reference;
 
     Field() = default;
 
-    Field(uint32_t num_images, uint32_t width, uint32_t height, double xc, double yc, double r) {
-        static auto constexpr align = uint32_t(byte_alignment / sizeof(value_type));
-        const auto stride = uint32_t(((num_images + (align - 1)) / align) * align);
+    static constexpr auto get_stride(index_type n) {
+        static auto constexpr align = index_type(byte_alignment / sizeof(value_type));
+        return index_type(((n + (align - 1)) / align) * align);
+    }
+
+    static constexpr auto prev_stride(index_type n) {
+        static auto constexpr align = index_type(byte_alignment / sizeof(value_type));
+        return index_type((n / align) * align);
+    }
+
+    Field(index_type num_images, index_type width, index_type height, double xc, double yc, double r) {
+        const auto stride = get_stride(num_images);
         mapping_storage = layout_cylinder::mapping_storage{
             extents_type{num_images, height, width}
           , xc
@@ -54,6 +64,9 @@ public:
 
     auto view() { return std::mdspan{storage.data(), mapping_storage.mapping()}; }
     auto view() const { return std::mdspan{storage.data(), mapping_storage.mapping()}; }
+
+    auto mapping() { return mapping_storage.mapping(); }
+    auto mapping() const { return mapping_storage.mapping(); }
 
     void swap(Field &other) noexcept {
         storage.swap(other.storage);
