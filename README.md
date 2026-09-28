@@ -64,12 +64,12 @@ together with the likelihood. In general form, it can be expressed as
     \qquad\text{(1)}
 ```
 
-where $`\lbrace E_i\rbrace_{i=1}^{k}`$ is a partition of an open set $`\Omega
-\subset \mathbb{R}^d`$, $`d \geq 2`$, into $`k`$ sets: $`E_i \cap E_j =
-\emptyset`$ if $`i \neq j`$, and $`\bigcup_{i=1}^{k} E_i = \Omega`$ (up to
-Lebesgue-negligible sets) [[3]](#3). $`g_i`$ in our case is derived from the MLE
-for the Gaussian noise: $`g_i(x) = \lambda (c_i - u(x))^2`$, where $`c_i`$ is a
-"label", the image intensity level for the phase $`i`$, $u(x)$ is our image, and
+where $\lbrace E _ i\rbrace_{i=1}^{k}$ is a partition of an open set
+$\Omega \subset \mathbb{R}^d$, $d \geq 2$, into $k$ sets:
+$E _ i \cap E _ j = \emptyset$ if $i \neq j$, and $\bigcup _ {i=1}^{k} E _ i = \Omega$
+(up to Lebesgue-negligible sets) [[3]](#3). $g _ i$ in our case is derived from the MLE
+for the Gaussian noise: $g _ i(x) = \lambda (c _ i - u(x))^2 $, where $c _ i$ is a
+“label”, the image intensity level for the phase $i$, $u(x)$ is our image, and
 $\lambda$ is the weight we assign to our data.
 
 The optimization problem ([1](#eq-potts)) is not easy to solve. Chambolle et al.
@@ -98,8 +98,8 @@ update these values for each voxel:
     \end{aligned}
 
 ```
-$\Pi_{S}$ is a projection of $k$ values on a simplex, i.e. $`v_i \in [0, 1]`$
-and $`\sum_{i = 1}^k{v_i} = 1`$. $\Pi_{K}$ is a projection of $k$
+$\Pi _ {S}$ is a projection of $k$ values on a simplex, i.e. $v_i \in [0, 1]$
+and $\sum _ {i = 1}^k{v _ i} = 1$. $\Pi_{K}$ is a projection of $k$
 $d$-dimensional vectors on set $K$, defined as
 
 ```math
