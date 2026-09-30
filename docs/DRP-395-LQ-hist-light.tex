@@ -1,0 +1,68 @@
+%LTeX: enabled=false
+\documentclass[11pt, twoside, paper = letter, svgnames]{scrartcl}
+
+\usepackage{polyglossia}
+\setdefaultlanguage[variant = american]{english}
+
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{unicode-math}
+\usepackage{mathtools}
+\usepackage{lualatex-math}
+\usepackage{xcolor}
+\usepackage{luacolor}
+\usepackage{scrlayer-scrpage}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{siunitx}
+\usepackage{physics}
+\usepackage{nicematrix}
+\usepackage{booktabs}
+\usepackage[version = 4]{mhchem}
+
+\usepgfplotslibrary{colorbrewer, patchplots}
+\pgfplotsset{
+    compat = 1.18
+  , cycle list/Dark2-8
+  }
+
+\usetikzlibrary{pgfplots.colorbrewer}
+
+\setmainfont{STIX Two Text}
+\setmathfont{STIX Two Math}
+\setmonofont{Libertinus Mono}[Scale = MatchLowercase]
+\setsansfont{Libertinus Sans}[Scale = MatchLowercase]
+
+\KOMAoptions{DIV = 17, fontsize = 11, BCOR = 5mm}
+
+\pagestyle{scrheadings}
+\renewcommand*{\titlepagestyle}{plain.scrheadings}
+
+\begin{document}
+
+\begin{center}
+    \pgfplotstableread{DRP-395-LQ-hist.txt}\histfile%
+    \begin{tikzpicture}
+        \begin{axis}[
+            title             = DRP-395 LQ dataset histogram
+          , width             = 0.9\linewidth
+          , height            = 0.556\linewidth
+          , scale only axis
+          , xlabel            = {Intensity}
+          , ylabel            = {Probability density}
+          , grid              = major
+          , enlargelimits     = false
+          , legend cell align = {left}
+          , legend pos        = north west
+          , ymax              = 67
+          , no markers
+          ]
+            \addplot+ [line width = 1.5pt, smooth]
+                table [
+                    x = brightness, y = {ch0}
+                  ] \histfile;
+        \end{axis}
+    \end{tikzpicture}
+\end{center}
+
+\end{document}

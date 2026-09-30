@@ -126,6 +126,24 @@ The only question that remains to answer is how to find our labels $c_i$.
 
 ## How to find labels
 
+One may think that if we have an image with three materials, finding the
+brightness of each should be straightforward: let's build a histogram, and we'll
+see three peaks. The location of the peaks will be our labels. If peaks overlap,
+and we want to be very pedantic, we can apply the Gaussian Mixture Model to find
+the peak locations. Unfortunately, it's not going to work. Here is the histogram
+of the DRP-395 LQ dataset:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/DRP-395-LQ-hist-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/DRP-395-LQ-hist-light.svg">
+    <img alt="vpunpckhbw visualization" src="docs/DRP-395-LQ-hist-light.svg" width="665px">
+  </picture>
+</p>
+
+We can see a large peak corresponding to glass. What are supposed to be peaks
+for brine and scCO<sub>2</sub>, is just a long tail with barely visible bump.
+
 ## References
 
 <a name="1"></a>
