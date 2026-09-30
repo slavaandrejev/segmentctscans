@@ -134,11 +134,10 @@ the peak locations. Unfortunately, it's not going to work. Here is the histogram
 of the DRP-395 LQ dataset:
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/DRP-395-LQ-hist-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/DRP-395-LQ-hist-light.svg">
-    <img alt="vpunpckhbw visualization" src="docs/DRP-395-LQ-hist-light.svg" width="665px">
-  </picture>
+  <img src="docs/DRP-395-LQ-hist-light.svg#gh-light-mode-only"
+       alt="DRP-395 LQ intensity histogram" width="665">
+  <img src="docs/DRP-395-LQ-hist-dark.svg#gh-dark-mode-only"
+       alt="DRP-395 LQ intensity histogram" width="665">
 </p>
 
 We can see a large peak corresponding to glass. What are supposed to be peaks
