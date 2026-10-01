@@ -301,7 +301,7 @@ int main(int argc, char *argv[]) try {
                    "Memory requirement for the CCP algorithm is {:.3f} GiB ({} labels)\n"
                    , required_size, K);
 
-        auto buffer = std::vector<uint8_t>(sizeof(sample_type) * outimgs * width * height);
+        auto buffer = std::vector<uint8_t>(4 * outimgs * width * height);
         auto outit  = buffer.data();
         auto oa     = io::BinOArchive{outit};
 
