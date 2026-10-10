@@ -174,6 +174,75 @@ auto gsl_minimize(
     return std::tuple{status, x, cost};
 }
 
+std::pair<float, float> tail_cutoffs(
+    const std::vector<double> &hist
+  , double lo_tail_thr
+  , double hi_tail_thr
+  , double range_start
+  , double range_end
+  )
+{
+    const auto bin_width = (range_end - range_start) / hist.size();
+    const auto total     = rs::accumulate(hist, 0.0);
+
+    auto quantile = [&](double p) -> float {
+        if (p <= 0) return float(range_start);
+        if (p >= 1) return float(range_end);
+
+        const auto target = p * total;
+        auto cum = 0.0;
+
+        for (size_t i = 0; i < hist.size(); ++i) {
+            const auto next = cum + hist[i];
+            if (hist[i] > 0 && target <= next) {
+                const auto fraction = (target - cum) / hist[i];
+                return float(range_start + (i + fraction) * bin_width);
+            }
+            cum = next;
+        }
+        return float(range_end);
+    };
+
+    return {quantile(lo_tail_thr), quantile(1.0 - hi_tail_thr)};
+}
+
+
+std::pair<float, float> tail_cutoffs(
+    CudaContext &ctx
+  , Field<float> &img
+  , double lo_tail_thr
+  , double hi_tail_thr
+  , double range_start
+  , double range_end
+  , double jitter = 0.0
+  )
+{
+    static constexpr auto nbins = 1024;
+
+    auto d_img = upload(ctx, img.view());
+    jitter = sqr(jitter) < 0.5 / nbins ? jitter : 0.0;
+    auto hist = calc_hist(ctx, *d_img, range_start, range_end, nbins, jitter);
+
+    return tail_cutoffs(hist, lo_tail_thr, hi_tail_thr, range_start, range_end);
+}
+
+std::pair<float, float> tail_cutoffs(
+    CudaContext &ctx
+  , Field<float> &img
+  , double lo_tail_thr
+  , double hi_tail_thr
+  , double jitter = 0.0
+  )
+{
+    static constexpr auto nbins = 1024;
+
+    auto d_img = upload(ctx, img.view());
+    jitter = sqr(jitter) < 0.5 / nbins ? jitter : 0.0;
+    auto [hist, range_start, range_end] = calc_hist(ctx, *d_img, nbins, jitter);
+
+    return tail_cutoffs(hist, lo_tail_thr, hi_tail_thr, range_start, range_end);
+}
+
 int main(int argc, char *argv[]) try {
     gsl_set_error_handler_off();
 
@@ -181,16 +250,22 @@ int main(int argc, char *argv[]) try {
     auto cmd_line_options = po::options_description{};
     auto vm               = po::variables_map{};
 
-    auto in_file_name             = std::string{};
-    auto pdf_name                 = std::string{};
-    auto init_peaks               = LabelsArray{};
-    auto tail_thr                 = 0.01;
+    auto in_file_name  = std::string{};
+    auto pdf_name      = std::string{};
+    auto init_peaks    = LabelsArray{};
+    auto both_tail_thr = 0.01;
+    auto lo_tail_thr   = 0.01;
+    auto hi_tail_thr   = 0.01;
+    auto v_tail_thr    = 0.01;
 
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "Input file")
         ("peaks", po::value(&init_peaks)->required(), "Initial peaks")
         ("pdf-name", po::value(&pdf_name), "Base name to write resulting distributions")
-        ("tailthr", po::value(&tail_thr), "Threshold to cut the tail of the histogram")
+        ("tailthr", po::value(&both_tail_thr), "Threshold to cut the tail of the histogram")
+        ("lotailthr", po::value(&lo_tail_thr), "Lower threshold to cut the tail of the histogram")
+        ("hitailthr", po::value(&hi_tail_thr), "Higher threshold to cut the tail of the histogram")
+        ("vtailthr", po::value(&v_tail_thr), "Threshold to cut the gradient magnitude tail of the histogram")
       ;
     positional.add("input", 1);
 
@@ -232,7 +307,7 @@ int main(int argc, char *argv[]) try {
     t.stop("Upload to GPU time");
 
     t.start();
-        auto d_grad_magn_img = grad_magn(*cuda_context, *d_img);
+        auto [d_grad_magn_img, vmin, vmax] = grad_magn(*cuda_context, *d_img);
     t.stop("Gradient magnitude time");
 
     auto grad_magn_img = Field<float>(img.view().mapping());
@@ -245,37 +320,28 @@ int main(int argc, char *argv[]) try {
     auto lo = img.lo();
     auto hi = img.hi();
 
-    auto hi_data_thr = 0.0f;
-    auto lo_data_thr = 0.0f;
-    {
-        t.start();
-            auto d_img = upload(*cuda_context, img.view());
-        t.stop("Upload to GPU time");
-        const auto nbins = 1024;
-        auto 𝛿 = 1.0 / (hi - lo);
-        𝛿 = sqr(𝛿) < 0.5 / nbins ? 𝛿 : 0.0;
-        t.start();
-            auto [hist, min, max] = calc_hist(*cuda_context, *d_img, nbins, 𝛿);
-        t.stop("Histogram time");
-
-        const auto bin_width = (double(max) - double(min)) / nbins;
-
-        auto const pct_lo_thr = tail_thr / bin_width;
-        auto const pct_hi_thr = (1.0 - tail_thr) / bin_width;
-
-        auto lo_thr_idx = size_t{}, hi_thr_idx = hist.size();
-
-        auto cum = 0.0;
-        for (auto i = size_t{}; hist.size() > i; ++i) {
-            cum += hist[i];
-            if (pct_lo_thr >= cum) { lo_thr_idx = i; }
-            if (pct_hi_thr <= cum) { hi_thr_idx = i; break; }
-        }
-
-        lo_data_thr = float(lo_thr_idx * bin_width + min);
-        hi_data_thr = float(hi_thr_idx * bin_width + min);
+    if (0 != vm.count("tailthr")) {
+        lo_tail_thr = hi_tail_thr = both_tail_thr;
     }
-    fmt::print("Fitting [{}, {}] range of intensities\n", lo_data_thr * (hi - lo) + lo, hi_data_thr * (hi - lo) + lo);
+
+    auto [lo_u_thr, hi_u_thr] = tail_cutoffs(
+        *cuda_context
+      , img
+      , lo_tail_thr
+      , hi_tail_thr
+      , 1.0 / (hi - lo)
+      );
+    fmt::print("Fitting [{}, {}] range of intensities\n", lo_u_thr * (hi - lo) + lo, hi_u_thr * (hi - lo) + lo);
+
+    auto [lo_v_thr, hi_v_thr] = tail_cutoffs(
+        *cuda_context
+      , grad_magn_img
+      , 0
+      , v_tail_thr
+      , 0
+      , vmax
+      );
+    fmt::print("Fitting [{}, {}] range of gradients\n", lo_v_thr * (hi - lo), hi_v_thr * (hi - lo));
 
     auto u_view = img.view();
     auto v_view = grad_magn_img.view();
@@ -291,7 +357,10 @@ int main(int argc, char *argv[]) try {
             for (auto k = uint32_t{}; m.n_images() > k; ++k) {
                 linear_u[count] = u_view[k, row, col];
                 linear_v[count] = v_view[k, row, col];
-                if (0 < v_view[k, row, col] && lo_data_thr <= u_view[k, row, col] && u_view[k, row, col] <= hi_data_thr) {
+                if (
+                    0 < v_view[k, row, col] && v_view[k, row, col] <= hi_v_thr &&
+                    lo_u_thr <= u_view[k, row, col] && u_view[k, row, col] <= hi_u_thr)
+                {
                     eligible.push_back(count);
                 }
                 ++count;
@@ -305,7 +374,6 @@ int main(int argc, char *argv[]) try {
     static auto constexpr restart_period = 100;
 
     auto rd        = std::random_device{};
-    // auto seed      = 1724410958u;
     auto seed      = rd();
     auto gen       = std::mt19937{seed};
     auto indices   = std::vector<size_t>(N * N_batches);
@@ -317,12 +385,14 @@ int main(int argc, char *argv[]) try {
         return 1;
     }
 
-    rs::sample(eligible, indices.begin(), indices.size(), gen);
-    rs::shuffle(indices, gen);
-    for (auto i = size_t{}; indices.size() > i; ++i) {
-        samples_u[i] = linear_u[indices[i]];
-        samples_v[i] = linear_v[indices[i]];
-    }
+    auto reset_samples = [&]() {
+        rs::sample(eligible, indices.begin(), indices.size(), gen);
+        rs::shuffle(indices, gen);
+        for (auto i = size_t{}; indices.size() > i; ++i) {
+            samples_u[i] = linear_u[indices[i]];
+            samples_v[i] = linear_v[indices[i]];
+        }
+    };
 
     const auto n_labels = init_peaks.data.size();
     const auto n_params = int(n_labels * (n_labels + 3) / 2 + 3);
@@ -337,10 +407,10 @@ int main(int argc, char *argv[]) try {
     const auto w_min  = -4.6,   w_max  = 4.6;    // somewhat logarithm of the real range,
                                                  // will be transformed by softmax
     const auto I_min  =  0.0,   I_max  = 1.0;
-    const auto 𝜎n_min = -7.0,   𝜎n_max = 0.69;   // logarithm of the real range
-    const auto 𝜎b_min = -2.3,   𝜎b_max = 2.3;    // logarithm of the real range
-    const auto 𝜌_min  =  0.0,   𝜌_max  = 0.999;
-    const auto ds_min = std::log(0.5), ds_max = std::log(1.5); // logarithm of the real range
+    const auto 𝜎n_min = std::log(1e-3), 𝜎n_max = std::log(2.0);  // logarithm of the real range
+    const auto 𝜎b_min = std::log(0.1),  𝜎b_max = std::log(10.0); // logarithm of the real range
+    const auto 𝜌_min  = 0.0,            𝜌_max  = 0.999;
+    const auto ds_min = std::log(0.5), ds_max = std::log(1.5);   // logarithm of the real range
 
     // fix the first weight to zero, then use softmax to produce probability weights
     auto get_weights = [](std::span<const double> a) {
@@ -401,18 +471,29 @@ int main(int argc, char *argv[]) try {
 
         auto Z = 0.0;
         for (auto i = 0; n_labels > i; ++i) {
-            Z += w[i] * M_i(lo_data_thr, hi_data_thr, Is[i], std::exp(restr[𝜎n_idx]));
+            Z += w[i] * M_i(
+                lo_u_thr
+              , hi_u_thr
+              , hi_v_thr
+              , Is[i]
+              , std::exp(restr[𝜎n_idx])
+              , restr[𝜌_idx]
+              );
         }
         auto wij = strict_upper_span<const double>{&w[n_labels], n_labels, n_labels};
         for (auto i = 0; n_labels - 1 > i; ++i) {
             for (auto j = i + 1; n_labels > j; ++j) {
                 Z += wij[i, j] * M_ij(
-                    lo_data_thr
-                  , hi_data_thr
+                    lo_u_thr
+                  , hi_u_thr
+                  , hi_v_thr
                   , Is[i]
                   , Is[j]
                   , std::exp(restr[𝜎n_idx])
-                  , std::exp(restr[ds_idx]));
+                  , std::exp(restr[𝜎b_idx])
+                  , std::exp(restr[ds_idx])
+                  , restr[𝜌_idx]
+                  );
             }
         }
 
@@ -463,8 +544,12 @@ int main(int argc, char *argv[]) try {
     for (auto i = n_labels - 1; n_weights > i; ++i) {
         x0[i] = inv_sigm(w_min * 0.99, w_min, w_max); // minimize interface terms
     }
-    auto batch_count = 0;
+
     auto step_sizes = bc::static_vector<double, max_params>(n_params, 1.0);
+    batch_start = 0;
+    batch_end   = N;
+    reset_samples();
+    auto batch_count = 0;
     auto [status, res, cost] = gsl_minimize(
         cost_func
       , x0
@@ -549,9 +634,9 @@ int main(int argc, char *argv[]) try {
         }
         fmt::print(full_pdf_file.get(), "u pdf\n");
 
-        const auto step = (hi_data_thr - lo_data_thr) / steps;
+        const auto step = (hi_tail_thr - lo_tail_thr) / steps;
         for (auto i = 0; steps >= i; ++i) {
-            auto u = (lo_data_thr + i * step);
+            auto u = (lo_tail_thr + i * step);
             auto pdf = marginal_p(
                 u
               , w
@@ -575,7 +660,7 @@ int main(int argc, char *argv[]) try {
             }
             fmt::print(pdf_file.get(), "u pdf\n");
             for (auto i = 0; steps >= i; ++i) {
-                auto u = (lo_data_thr + i * step);
+                auto u = (lo_tail_thr + i * step);
                 auto pdf = w[c] * marginal_p_i(
                     u
                   , Is[c]
@@ -600,7 +685,7 @@ int main(int argc, char *argv[]) try {
                 }
                 fmt::print(pdf_file.get(), "u pdf\n");
                 for (auto k = 0; steps >= k; ++k) {
-                    auto u = (lo_data_thr + k * step);
+                    auto u = (lo_tail_thr + k * step);
                     auto pdf = w[idx] * marginal_p_ij(
                         u
                       , Is[i]

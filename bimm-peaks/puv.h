@@ -220,26 +220,51 @@ auto marginal_p(
 }
 
 inline
-auto M_i(double lo, double hi, double I_i, double 𝜎_n) {
+auto M_i(double Lu, double Hu, double Hv, double I_i, double 𝜎_n, double 𝜌) {
     namespace mc = boost::math::double_constants;
-    return 0.5 * (
-        gsl_sf_erf((hi - I_i) / (mc::root_two * 𝜎_n)) -
-        gsl_sf_erf((lo - I_i) / (mc::root_two * 𝜎_n))
-    );
+    const auto 𝜎_n2 = sqr(𝜎_n);
+    const auto a    = 𝜎_n2 * (1 - 𝜌);
+    const auto sqra = std::sqrt(a);
+    return
+        (
+            gsl_sf_erf((Hu - I_i) / (mc::root_two * 𝜎_n)) -
+            gsl_sf_erf((Lu - I_i) / (mc::root_two * 𝜎_n))
+        ) * (
+            0.5 * gsl_sf_erf(Hv / sqra) -
+            Hv * std::exp(-sqr(Hv) / a) / sqra / mc::root_pi
+        );
 }
 
 inline
-auto M_ij(double lo, double hi, double I_i, double I_j, double 𝜎_n, double ds) {
+auto M_ij(double Lu, double Hu, double Hv, double I_i, double I_j, double 𝜎_n, double 𝜎_b, double ds, double 𝜌) {
     namespace mc = boost::math::double_constants;
+
+    const auto 𝜎_n2 = sqr(𝜎_n);
+    const auto a    = 𝜎_n2 * (1 - 𝜌);
+    const auto sqra = std::sqrt(a);
+    const auto h    = Hv / sqra;
 
     auto [status, integral, abserr] =
         gsl_integration(-ds, ds, 1e-10, 1e-6, [&](double t) {
             auto I = I_i + 0.5 * (I_j - I_i) *
                 (1 + gsl_sf_erf(t / mc::root_two));
 
+            auto G = std::abs(I_j - I_i) / 𝜎_b * std::exp(-sqr(t) / 2) / mc::root_pi / mc::root_two;
+
+            const auto g = G / sqra;
+            const auto z = 4 * g * h;
+
+            const auto ratio = z == 0 ? 1.0 : -std::expm1(-z) / z;
+
+            const auto gradient_mass_twice =
+                gsl_sf_erf(g + h) - gsl_sf_erf(g - h)
+                - 4 * h / mc::root_pi * std::exp(-sqr(g - h)) * ratio;
+
             return
-                gsl_sf_erf((hi - I) / (mc::root_two * 𝜎_n)) -
-                gsl_sf_erf((lo - I) / (mc::root_two * 𝜎_n));
+                gradient_mass_twice * (
+                    gsl_sf_erf((Hu - I) / (mc::root_two * 𝜎_n)) -
+                    gsl_sf_erf((Lu - I) / (mc::root_two * 𝜎_n))
+                );
         });
 
     if (GSL_SUCCESS != status) {
@@ -256,5 +281,5 @@ auto M_ij(double lo, double hi, double I_i, double I_j, double 𝜎_n, double ds
           , ds);
     }
 
-    return integral / (4 * ds);
+    return integral / (8 * ds);
 }
