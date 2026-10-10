@@ -459,9 +459,7 @@ int main(int argc, char *argv[]) try {
         return restr;
     };
 
-    auto batch_start = 0;
-    auto batch_end   = N;
-    auto cost_func = [&](std::span<double> x) {
+    auto cost_func = [&](std::span<double> x, int batch_start, int batch_end) {
         auto res = 0.0;
 
         auto restr = restrict_params(x);
@@ -546,12 +544,10 @@ int main(int argc, char *argv[]) try {
     }
 
     auto step_sizes = bc::static_vector<double, max_params>(n_params, 1.0);
-    batch_start = 0;
-    batch_end   = N;
     reset_samples();
     auto batch_count = 0;
     auto [status, res, cost] = gsl_minimize(
-        cost_func
+        [&](std::span<double> x) { return cost_func(x, N * batch_count, N * batch_count + N); }
       , x0
       , step_sizes
       , restart_period * N_batches
@@ -563,8 +559,6 @@ int main(int argc, char *argv[]) try {
 
             if (change_batch) {
                 batch_count = (batch_count + 1) % N_batches;
-                batch_start = N * batch_count;
-                batch_end   = batch_start + N;
             }
 
             return change_batch;
@@ -572,10 +566,8 @@ int main(int argc, char *argv[]) try {
       );
 
     // Run on the full dataset
-    batch_start = 0;
-    batch_end   = N * N_batches;
     std::tie(status, res, cost) = gsl_minimize(
-        cost_func
+        [&](std::span<double> x) { return cost_func(x, 0, N * N_batches); }
       , res
       , step_sizes
       , 10'000
