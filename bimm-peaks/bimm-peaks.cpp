@@ -18,6 +18,7 @@
 #include <gsl/gsl_multimin.h>
 
 #include <range/v3/algorithm/copy.hpp>
+#include <range/v3/algorithm/fill.hpp>
 #include <range/v3/algorithm/sample.hpp>
 #include <range/v3/algorithm/shuffle.hpp>
 #include <range/v3/numeric/accumulate.hpp>
@@ -75,7 +76,9 @@ void validate(boost::any &v,
     v = boost::any(LabelsArray{.data = data});
 }
 
-static auto constexpr max_params = max_phases * (max_phases + 3) / 2 + 3;
+static auto constexpr max_params  = max_phases + 4;
+static constexpr auto max_weights = max_phases * (max_phases + 1) / 2;
+
 
 template <typename  CostFunc, typename ProgressFunc>
 auto gsl_minimize(
@@ -375,12 +378,17 @@ int main(int argc, char *argv[]) try {
     static auto constexpr N_batches      = 100;
     static auto constexpr restart_period = 100;
 
+    const auto n_labels  = init_peaks.data.size();
+    const auto n_params  = int(n_labels + 4);
+    const auto n_weights = n_labels * (n_labels + 1) / 2;
+
     auto rd        = std::random_device{};
     auto seed      = rd();
     auto gen       = std::mt19937{seed};
     auto indices   = std::vector<size_t>(N * N_batches);
     auto samples_u = std::vector<double>(N * N_batches);
     auto samples_v = std::vector<double>(N * N_batches);
+    auto p_cache   = std::vector<double>(N * N_batches * n_weights);
 
     if (eligible.size() < indices.size()) {
         fmt::print(stderr, "Not enough eligible voxels\n");
@@ -396,40 +404,20 @@ int main(int argc, char *argv[]) try {
         }
     };
 
-    const auto n_labels = init_peaks.data.size();
-    const auto n_params = int(n_labels * (n_labels + 3) / 2 + 3);
-
-    const auto n_weights   = n_labels * (n_labels + 1) / 2 - 1;
-    const auto I_start_idx = n_weights;
+    const auto I_start_idx = 0;
     const auto 𝜎n_idx      = I_start_idx + n_labels;
     const auto 𝜎b_idx      = 𝜎n_idx + 1;
     const auto 𝜌_idx       = 𝜎b_idx + 1;
     const auto ds_idx      = 𝜌_idx  + 1;
 
-    const auto w_min  = -4.6,   w_max  = 4.6; // somewhat logarithm of the real range,
-                                              // will be transformed by softmax
-    const auto I_min  =  0.0,   I_max  = 1.0;
-    const auto 𝜎n_min = std::log(1e-3), 𝜎n_max = std::log(2.0);   // logarithm of the real range
-    const auto 𝜎b_min = std::log(0.1),  𝜎b_max = std::log(10.0);  // logarithm of the real range
-    const auto 𝜌_min  = 0.0,            𝜌_max  = 0.999;
-    const auto ds_min = std::log(0.5), ds_max = std::log(max_ds); // logarithm of the real range
+    const auto I_min = 0.0, I_max  = 1.0;
+    const auto 𝜌_min = 0.0, 𝜌_max  = 0.999;
+    const auto 𝜎n_min = std::log(1e-3), 𝜎n_max = std::log(2.0);    // logarithm of the real range
+    const auto 𝜎b_min = std::log(0.1),  𝜎b_max = std::log(10.0);   // logarithm of the real range
+    const auto ds_min = std::log(0.5),  ds_max = std::log(max_ds); // logarithm of the real range
 
-    // fix the first weight to zero, then use softmax to produce probability weights
-    auto get_weights = [](std::span<const double> a) {
-        auto all_w = rv::concat(rv::single(0.0), a);
-        auto exp_vew = all_w | rv::transform([](auto x) {
-            return std::exp(x);
-        });
-        auto sum = rs::accumulate(exp_vew, 0.0);
-
-        auto w = bc::static_vector<double, max_params>(a.size() + 1);
-        auto w_view = all_w | rv::transform([&](auto x) {
-            return std::exp(x) / sum;
-        });
-        rs::copy(w_view, w.begin());
-
-        return w;
-    };
+    auto best_w    = bc::static_vector<double, max_weights>(n_weights);
+    auto best_cost = std::numeric_limits<double>::max();
 
     auto get_labels = [](std::span<const double> a) {
 #if 0
@@ -446,9 +434,6 @@ int main(int argc, char *argv[]) try {
     auto restrict_params = [&](std::span<double> x) {
         auto restr = bc::static_vector<double, max_params>(n_params);
 
-        for (auto i = 0; n_weights > i; ++i) {
-            restr[i] = sigm(x[i], w_min, w_max);
-        }
         for (auto i = 0; n_labels > i; ++i) {
             restr[I_start_idx + i] = sigm(x[I_start_idx + i], I_min, I_max);
         }
@@ -461,16 +446,47 @@ int main(int argc, char *argv[]) try {
     };
 
     auto cost_func = [&](std::span<double> x, int batch_start, int batch_end) {
-        auto res = 0.0;
+        const auto n_samples = batch_end - batch_start;
 
         auto restr = restrict_params(x);
 
-        auto w  = get_weights({&restr[0], n_weights});
         auto Is = get_labels({&restr[I_start_idx], n_labels});
 
-        auto Z = 0.0;
+        // Compute p_i and p_ij distributions for every sample in the current
+        // batch and for the current parameters
+        auto p = std::mdspan{&p_cache[0], n_samples, n_weights};
+        #pragma omp parallel for schedule(dynamic)
+        for (auto n = 0; n_samples > n; ++n) {
+            for (auto i = 0; n_labels > i; ++i) {
+                p[n, i] = full_p_i(
+                    samples_u[batch_start + n]
+                  , samples_v[batch_start + n]
+                  , Is[i]
+                  , restr[𝜎n_idx]
+                  , restr[𝜌_idx]
+                  );
+            }
+            auto pij = strict_upper_span<double>{&p[n, n_labels], n_labels, n_labels};
+            for (auto i = 0; n_labels - 1 > i; ++i) {
+                for (auto j = i + 1; n_labels > j; ++j) {
+                    pij[i, j] = full_p_ij(
+                        samples_u[batch_start + n]
+                      , samples_v[batch_start + n]
+                      , Is[i]
+                      , Is[j]
+                      , restr[𝜎n_idx]
+                      , restr[𝜎b_idx]
+                      , restr[ds_idx]
+                      , restr[𝜌_idx]
+                      );
+                }
+            }
+        }
+
+        // Norms of the truncated p_i and p_ij distributions for the current parameters
+        auto M = bc::static_vector<double, max_weights>(n_weights);
         for (auto i = 0; n_labels > i; ++i) {
-            Z += w[i] * M_i(
+            M[i] = M_i(
                 lo_u_thr
               , hi_u_thr
               , hi_v_thr
@@ -479,10 +495,10 @@ int main(int argc, char *argv[]) try {
               , restr[𝜌_idx]
               );
         }
-        auto wij = strict_upper_span<const double>{&w[n_labels], n_labels, n_labels};
+        auto Mij = strict_upper_span<double>{&M[n_labels], n_labels, n_labels};
         for (auto i = 0; n_labels - 1 > i; ++i) {
             for (auto j = i + 1; n_labels > j; ++j) {
-                Z += wij[i, j] * M_ij(
+                Mij[i, j] = M_ij(
                     lo_u_thr
                   , hi_u_thr
                   , hi_v_thr
@@ -496,31 +512,88 @@ int main(int argc, char *argv[]) try {
             }
         }
 
-        #pragma omp parallel for reduction(+:res) schedule(dynamic)
-        for (auto i = batch_start; batch_end > i; ++i) {
-            res += -std::log(full_p(
-                samples_u[i]
-              , samples_v[i]
-              , w
-              , Is
-              , restr[𝜎n_idx]
-              , restr[𝜎b_idx]
-              , restr[ds_idx]
-              , restr[𝜌_idx]
-              ));
+        // Weights for the truncated p_i and p_ij distributions
+        auto 𝛼 = bc::static_vector<double, max_weights>(n_weights);
+        auto w_norm = 0.0;
+        for (auto i = 0; n_weights > i; ++i) {
+            𝛼[i] = std::max(best_w[i], 1e-6) * M[i];
+            w_norm += 𝛼[i];
+        }
+        for (auto i = 0; n_weights > i; ++i) {
+            𝛼[i] /= w_norm;
         }
 
-        return res / (batch_end - batch_start) + std::log(Z);
+        // Find the weights that minimize the cost function for the current
+        // parameters using convex optimization.
+        auto next_𝛼 = bc::static_vector<double, max_weights>(n_weights);
+        for (;;){
+            rs::fill(next_𝛼, 0.0);
+            auto *next = next_𝛼.data();
+            #pragma omp parallel for reduction(+:next[:n_weights])
+            for (auto n = 0; n_samples > n; ++n) {
+                auto d = 0.0;
+                for (auto i = 0; n_weights > i; ++i) {
+                    d += 𝛼[i] * p[n, i] / M[i];
+                }
+                for (auto i = 0; n_weights > i; ++i) {
+                    next[i] += p[n, i] / M[i] / d;
+                }
+            }
+            auto max_s = 0.0;
+            for (auto i = 0; n_weights > i; ++i) {
+                next_𝛼[i] /= n_samples;
+                max_s = std::max(max_s, next_𝛼[i]);
+            }
+            if (max_s - 1.0 < 1e-6) {
+                break;
+            }
+            for (auto i = 0; n_weights > i; ++i) {
+                next_𝛼[i] *= 𝛼[i];
+            }
+            𝛼.swap(next_𝛼);
+        }
+
+        auto w = bc::static_vector<double, max_weights>(n_weights);
+        auto 𝛼_norm = 0.0;
+        for (auto i = 0; n_weights > i; ++i) {
+            𝛼_norm += 𝛼[i] / M[i];
+        }
+        for (auto i = 0; n_weights > i; ++i) {
+            w[i] = 𝛼[i] / M[i] / 𝛼_norm;
+        }
+
+        auto Z = 0.0;
+        for (auto i = 0; n_weights > i; ++i) {
+            Z += w[i] * M[i];
+        }
+
+        auto cost = 0.0;
+        #pragma omp parallel for reduction(+:cost)
+        for (auto i = 0; n_samples > i; ++i) {
+            auto full_p = 0.0;
+            for (auto j = 0; n_weights > j; ++j) {
+                full_p += w[j] * p[i, j];
+            }
+            cost -= std::log(full_p);
+        }
+
+        cost = cost / (batch_end - batch_start) + std::log(Z);
+
+        if (cost < best_cost) {
+            best_cost = cost;
+            best_w = w;
+        }
+
+        return cost;
     };
 
     auto print_log = [&](int iter, double cost, double size, std::span<double> x) {
         auto restr = restrict_params(x);
 
-        auto w  = get_weights({&restr[0], n_weights});
         auto Is = get_labels({&restr[I_start_idx], n_labels});
         fmt::print("{:5} {:14.9f} {:9.6f} |", iter, cost, size);
-        for (auto i = 0; w.size() > i; ++i) {
-            fmt::print("{:9.6f}", w[i]);
+        for (auto i = 0; best_w.size() > i; ++i) {
+            fmt::print("{:9.6f}", best_w[i]);
         }
         fmt::print(" |");
         for (auto i = 0; Is.size() > i; ++i) {
@@ -540,9 +613,7 @@ int main(int argc, char *argv[]) try {
     for (auto i = 0; n_labels > i; ++i) {
         x0[I_start_idx + i] = inv_sigm((init_peaks.data[i] - lo) / (hi - lo), I_min, I_max);
     }
-    for (auto i = n_labels - 1; n_weights > i; ++i) {
-        x0[i] = inv_sigm(w_min * 0.99, w_min, w_max); // minimize interface terms
-    }
+    rs::fill(best_w, 1.0 / n_weights);
 
     auto step_sizes = bc::static_vector<double, max_params>(n_params, 1.0);
     reset_samples();
@@ -560,6 +631,7 @@ int main(int argc, char *argv[]) try {
 
             if (change_batch) {
                 batch_count = (batch_count + 1) % N_batches;
+                best_cost = std::numeric_limits<double>::max();
             }
 
             return change_batch;
@@ -567,6 +639,7 @@ int main(int argc, char *argv[]) try {
       );
 
     // Run on the full dataset
+    best_cost = std::numeric_limits<double>::max();
     std::tie(status, res, cost) = gsl_minimize(
         [&](std::span<double> x) { return cost_func(x, 0, N * N_batches); }
       , res
@@ -595,16 +668,15 @@ int main(int argc, char *argv[]) try {
       , std::exp(restr[ds_idx])
       , restr[𝜌_idx]);
 
-    auto w  = get_weights({&restr[0], n_weights});
     auto Is = get_labels({&restr[I_start_idx], n_labels});
     for (auto i = 0; n_labels > i; ++i) {
         fmt::print("{}\n", (hi - lo) * Is[i] + lo);
     }
 
     for (auto i = 0; n_labels > i; ++i) {
-        fmt::print("w[{}] = {}\n", i, w[i]);
+        fmt::print("w[{}] = {}\n", i, best_w[i]);
     }
-    auto wij = strict_upper_span<const double>{&w[n_labels], n_labels, n_labels};
+    auto wij = strict_upper_span<const double>{&best_w[n_labels], n_labels, n_labels};
     for (auto i = 0; n_labels - 1 > i; ++i) {
         for (auto j = i + 1; n_labels > j; ++j) {
             fmt::print("w[{}, {}] = {}\n", i, j, wij[i, j]);
@@ -627,12 +699,12 @@ int main(int argc, char *argv[]) try {
         }
         fmt::print(full_pdf_file.get(), "u pdf\n");
 
-        const auto step = (hi_tail_thr - lo_tail_thr) / steps;
+        const auto step = (hi_u_thr - lo_u_thr) / steps;
         for (auto i = 0; steps >= i; ++i) {
-            auto u = (lo_tail_thr + i * step);
+            auto u = (lo_u_thr + i * step);
             auto pdf = marginal_p(
                 u
-              , w
+              , best_w
               , Is
               , std::exp(restr[𝜎n_idx])
               , std::exp(restr[ds_idx])
@@ -653,8 +725,8 @@ int main(int argc, char *argv[]) try {
             }
             fmt::print(pdf_file.get(), "u pdf\n");
             for (auto i = 0; steps >= i; ++i) {
-                auto u = (lo_tail_thr + i * step);
-                auto pdf = w[c] * marginal_p_i(
+                auto u = (lo_u_thr + i * step);
+                auto pdf = best_w[c] * marginal_p_i(
                     u
                   , Is[c]
                   , std::exp(restr[𝜎n_idx])
@@ -678,8 +750,8 @@ int main(int argc, char *argv[]) try {
                 }
                 fmt::print(pdf_file.get(), "u pdf\n");
                 for (auto k = 0; steps >= k; ++k) {
-                    auto u = (lo_tail_thr + k * step);
-                    auto pdf = w[idx] * marginal_p_ij(
+                    auto u = (lo_u_thr + k * step);
+                    auto pdf = best_w[idx] * marginal_p_ij(
                         u
                       , Is[i]
                       , Is[j]
