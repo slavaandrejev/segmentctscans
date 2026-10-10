@@ -257,6 +257,7 @@ int main(int argc, char *argv[]) try {
     auto lo_tail_thr   = 0.01;
     auto hi_tail_thr   = 0.01;
     auto v_tail_thr    = 0.01;
+    auto max_ds        = 1.5;
 
     cmd_line_options.add_options()
         ("input", po::value<std::string>(&in_file_name)->required(), "Input file")
@@ -266,6 +267,7 @@ int main(int argc, char *argv[]) try {
         ("lotailthr", po::value(&lo_tail_thr), "Lower threshold to cut the tail of the histogram")
         ("hitailthr", po::value(&hi_tail_thr), "Higher threshold to cut the tail of the histogram")
         ("vtailthr", po::value(&v_tail_thr), "Threshold to cut the gradient magnitude tail of the histogram")
+        ("maxds", po::value(&max_ds), "Maximum interface thickness in 𝜎b units")
       ;
     positional.add("input", 1);
 
@@ -404,13 +406,13 @@ int main(int argc, char *argv[]) try {
     const auto 𝜌_idx       = 𝜎b_idx + 1;
     const auto ds_idx      = 𝜌_idx  + 1;
 
-    const auto w_min  = -4.6,   w_max  = 4.6;    // somewhat logarithm of the real range,
-                                                 // will be transformed by softmax
+    const auto w_min  = -4.6,   w_max  = 4.6; // somewhat logarithm of the real range,
+                                              // will be transformed by softmax
     const auto I_min  =  0.0,   I_max  = 1.0;
-    const auto 𝜎n_min = std::log(1e-3), 𝜎n_max = std::log(2.0);  // logarithm of the real range
-    const auto 𝜎b_min = std::log(0.1),  𝜎b_max = std::log(10.0); // logarithm of the real range
+    const auto 𝜎n_min = std::log(1e-3), 𝜎n_max = std::log(2.0);   // logarithm of the real range
+    const auto 𝜎b_min = std::log(0.1),  𝜎b_max = std::log(10.0);  // logarithm of the real range
     const auto 𝜌_min  = 0.0,            𝜌_max  = 0.999;
-    const auto ds_min = std::log(0.5), ds_max = std::log(1.5);   // logarithm of the real range
+    const auto ds_min = std::log(0.5), ds_max = std::log(max_ds); // logarithm of the real range
 
     // fix the first weight to zero, then use softmax to produce probability weights
     auto get_weights = [](std::span<const double> a) {
@@ -428,7 +430,6 @@ int main(int argc, char *argv[]) try {
 
         return w;
     };
-
 
     auto get_labels = [](std::span<const double> a) {
 #if 0
