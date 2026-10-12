@@ -142,6 +142,114 @@ of the DRP-395 LQ dataset:
 
 We can see a large peak corresponding to glass. What are supposed to be peaks
 for brine and scCO<sub>2</sub>, is just a long tail with barely visible bump.
+The reason is noise and “partial volume”. The latter means that the boundaries
+between phases are blurry, and thus some pixels happen to represent two phases.
+Luckily, we can model the partial volume and recover labels for segmentation.
+The method of modeling was suggested by Brenne et al. (2021) [[4]](#4). The idea
+is to use not the distribution of intensity $u$, but a joint distribution of $u$
+and $v = \lVert \nabla u\rVert $. Below is an example of this histogram for the
+DPR-395 LQ dataset,
+
+<p align="center">
+  <img src="docs/DRP-395-LQ-uv-hist-light.svg#gh-light-mode-only"
+       alt="DRP-395 LQ intensity histogram" width="665">
+  <img src="docs/DRP-395-LQ-uv-hist-dark.svg#gh-dark-mode-only"
+       alt="DRP-395 LQ intensity histogram" width="665">
+</p>
+
+In their work, Brenne et al. (2021) developed a Blurred Interface Mixture Model
+(BIMM). The full PDF in the histogram above is
+
+```math
+    p(u, v) = \sum_i{w_i p_i(u, v)} + \sum_{i < j}{w_{ij} p_{ij}(u, v)},
+```
+where $\{w_i, w_{ij}\}$ sum up to 1. $p_i$ is the PDF of a pure phase $i$, and
+$p_{ij}$ is the PDF of the voxels from the interface between phases $i$ and $j$.
+Using maximum likelihood estimation,
+
+```math
+    \theta_{\text{max}} = \argmax_{\theta}{
+        \sum_m{\log{p(u_m, v_m)}}
+    }
+    \text{,}
+```
+
+where $\theta$ are model parameters, we can find our labels and weights $w_i$,
+$w_{ij}$. Note that to get the data the [Tawfik et al. 2022](#1) paper was
+retrieving, we can stop here. From the weights we can find porosity and
+scCO<sub>2</sub> saturation, and we don't need segmentation.
+
+## DRP-395 results
+
+[Tawfik et al. 2022](#1) measured two datasets of the same sample: LQ, which was
+intentionally noisy and low quality, and HQ, which had twice lower amplitude of
+noise. Below are the results of fitting the BIMM model on both the low and high
+quality datasets.
+
+<p align="center">
+  <img src="docs/DRP-395-LQ-BIMM-light.svg#gh-light-mode-only"
+       alt="DRP-395 LQ BIMM model fitting" width="665">
+  <img src="docs/DRP-395-LQ-BIMM-dark.svg#gh-dark-mode-only"
+       alt="DRP-395 LQ BIMM model fitting" width="665">
+</p>
+
+<p align="center">
+  <img src="docs/DRP-395-HQ-BIMM-light.svg#gh-light-mode-only"
+       alt="DRP-395 HQ BIMM model fitting" width="665">
+  <img src="docs/DRP-395-HQ-BIMM-dark.svg#gh-dark-mode-only"
+       alt="DRP-395 HQ BIMM model fitting" width="665">
+</p>
+
+The corresponding numbers extracted from the BIMM model,
+
+<p align="center">
+
+| Quantity | LQ BIMM | HQ BIMM |
+|---|---:|---:|
+| scCO<sub>2</sub> fraction | 8.1% | 9.3% |
+| Brine fraction | 11.8% | 11.2% |
+| Glass fraction | 80.0% | 79.6% |
+| Porosity | 20.0% | 20.4% |
+| scCO<sub>2</sub> saturation | 40.6% | 45.3% |
+| scCO<sub>2</sub> peak | 3.366E-02 | 3.386E-02 |
+| Brine peak | 4.049E-02 | 4.086E-02 |
+| Glass peak | 5.228E-02 | 5.269E-02 |
+
+</p>
+
+Finally, using the extracted peaks for scCO<sub>2</sub>, brine, and glass, we
+can segment the data. Here is the same slice from the segmented LQ dataset,
+
+<p align="center">
+  <picture>
+    <img alt="SLice from the original LQ dataset" src="docs/DRP-395-LQ, slice-400 (𝜆 = 030.000).png" width="670px">
+  </picture>
+</p>
+
+The same slice from the HQ dataset,
+
+<p align="center">
+  <picture>
+    <img alt="SLice from the original LQ dataset" src="docs/DRP-395-HQ, slice-400 (𝜆 = 030.000).png" width="670px">
+  </picture>
+</p>
+
+The final summary of numbers,
+
+<p align="center">
+
+| Quantity | LQ BIMM | HQ BIMM | LQ segmentation | HQ segmentation |
+|---|---:|---:|---:|---:|
+| scCO<sub>2</sub> fraction | 8.1% | 9.3% | 7.8% | 7.6% |
+| Brine fraction | 11.8% | 11.2% | 11.8% | 12.2% |
+| Glass fraction | 80.0% | 79.6% | 80.5% | 80.2% |
+| Porosity | 20.0% | 20.4% | 19.5% | 19.8% |
+| scCO<sub>2</sub> saturation | 40.6% | 45.3% | 39.7% | 38.4% |
+| scCO<sub>2</sub> peak | 3.366E-02 | 3.386E-02 |||
+| Brine peak | 4.049E-02 | 4.086E-02 |||
+| Glass peak | 5.228E-02 | 5.269E-02 |||
+
+</p>
 
 ## References
 
@@ -161,5 +269,11 @@ https://digitalporousmedia.org/published-datasets/drp.project.published.DRP-395
 
 <a name="3"></a>
 [3] Chambolle, A., Cremers, D., and Pock, T. (2012) “A convex approach to minimal
-partitions,” SIAM Journal on Imaging Sciences, 5(4), 1113–1158, available:
+partitions,” _SIAM Journal on Imaging Sciences_, 5(4), 1113–1158, available:
 https://doi.org/10.1137/110856733.
+
+<a name="4"></a> [4] Brenne, E.O., Dahl, V.A., and Jørgensen, P.S. (2021) “A
+physical model for microstructural characterization and segmentation of 3D
+tomography data,” _Materials Characterization_, 171, 110796, available:
+https://doi.org/10.1016/j.matchar.2020.110796.
+

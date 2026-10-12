@@ -1,0 +1,77 @@
+%LTeX: enabled=false
+\documentclass[11pt, twoside, paper = letter, svgnames]{scrartcl}
+
+\usepackage{polyglossia}
+\setdefaultlanguage[variant = american]{english}
+
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{unicode-math}
+\usepackage{mathtools}
+\usepackage{lualatex-math}
+\usepackage{xcolor}
+\usepackage{luacolor}
+\usepackage{scrlayer-scrpage}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{siunitx}
+\usepackage{physics}
+\usepackage{nicematrix}
+\usepackage{booktabs}
+\usepackage[version = 4]{mhchem}
+
+\usepgfplotslibrary{colorbrewer, patchplots}
+\pgfplotsset{
+    compat = 1.18
+  , cycle list/Dark2-8
+  }
+
+\usetikzlibrary{pgfplots.colorbrewer}
+
+\setmainfont{STIX Two Text}
+\setmathfont{STIX Two Math}
+\setmonofont{Libertinus Mono}[Scale = MatchLowercase]
+\setsansfont{Libertinus Sans}[Scale = MatchLowercase]
+
+\KOMAoptions{DIV = 17, fontsize = 11, BCOR = 5mm}
+
+\pagestyle{scrheadings}
+\renewcommand*{\titlepagestyle}{plain.scrheadings}
+
+\begin{document}
+
+\begin{center}
+    \begin{tikzpicture}
+        \begin{axis}[
+            title             = {DRP-395 LQ dataset $u$, $v$ histogram}
+          , width             = 0.9\linewidth
+          , height            = 0.556\linewidth
+          , scale only axis
+          , xlabel            = {Intensity ($u$)}
+          , ylabel            = {Gradient magnitude ($v = \lVert \nabla u\rVert$)}
+          , grid              = none
+          , enlargelimits     = false
+          , ymax              = 0.01
+          , clip limits       = false
+          , view              = {0}{90}
+          ]
+            \addplot graphics[
+                xmin = 0.019182531
+              , xmax = 0.075767376
+              , ymin = 5.902259e-08
+              , ymax = 0.023355495
+              ] {DRP-395-LQ-uv-hist.png};
+            \addplot3 [
+                contour lua = {
+                    levels = {50, 150, 250, 350, 450, 550, 650, 750}
+                  , labels = false
+                  }
+              , mesh/rows = 512
+              , mesh/cols = 512
+              , very thick
+              ] table[x = u, y = v, z = pdf] {DRP-395-LQ-uv-hist.txt};
+        \end{axis}
+    \end{tikzpicture}
+\end{center}
+
+\end{document}
