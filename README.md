@@ -205,7 +205,7 @@ The corresponding numbers extracted from the BIMM model,
 <div align="center">
 
 | Quantity | LQ BIMM | HQ BIMM |
-|---|---:|---:|
+|:--|---:|---:|
 | scCO<sub>2</sub> fraction | 8.1% | 9.3% |
 | Brine fraction | 11.8% | 11.2% |
 | Glass fraction | 80.0% | 79.6% |
@@ -239,7 +239,7 @@ The final summary of numbers,
 <div align="center">
 
 | Quantity | LQ BIMM | HQ BIMM | LQ segmentation | HQ segmentation |
-|---|---:|---:|---:|---:|
+|:--|---:|---:|---:|---:|
 | scCO<sub>2</sub> fraction | 8.1% | 9.3% | 7.8% | 7.6% |
 | Brine fraction | 11.8% | 11.2% | 11.8% | 12.2% |
 | Glass fraction | 80.0% | 79.6% | 80.5% | 80.2% |
