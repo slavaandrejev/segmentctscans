@@ -39,7 +39,7 @@ the CT scan. The scan axis is horizontal.
 
 <p align="center">
   <picture>
-    <img alt="SLice from the original LQ dataset" src="docs/DRP-395-LQ, slice-400.png" width="670px">
+    <img alt="Slice from the original LQ dataset" src="docs/DRP-395-LQ, slice-400.png" width="670px">
   </picture>
 </p>
 
@@ -202,7 +202,7 @@ quality datasets.
 
 The corresponding numbers extracted from the BIMM model,
 
-<p align="center">
+<div align="center">
 
 | Quantity | LQ BIMM | HQ BIMM |
 |---|---:|---:|
@@ -215,7 +215,7 @@ The corresponding numbers extracted from the BIMM model,
 | Brine peak | 4.049E-02 | 4.086E-02 |
 | Glass peak | 5.228E-02 | 5.269E-02 |
 
-</p>
+</div>
 
 Finally, using the extracted peaks for scCO<sub>2</sub>, brine, and glass, we
 can segment the data. Here is the same slice from the segmented LQ dataset,
@@ -236,7 +236,7 @@ The same slice from the HQ dataset,
 
 The final summary of numbers,
 
-<p align="center">
+<div align="center">
 
 | Quantity | LQ BIMM | HQ BIMM | LQ segmentation | HQ segmentation |
 |---|---:|---:|---:|---:|
@@ -249,7 +249,7 @@ The final summary of numbers,
 | Brine peak | 4.049E-02 | 4.086E-02 |||
 | Glass peak | 5.228E-02 | 5.269E-02 |||
 
-</p>
+</div>
 
 ## References
 
