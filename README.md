@@ -168,21 +168,21 @@ $p_{ij}$ is the PDF of the voxels from the interface between phases $i$ and $j$.
 Using maximum likelihood estimation,
 
 ```math
-    \theta_{\text{max}} = \argmax_{\theta}{
-        \sum_m{\log{p(u_m, v_m)}}
-    }
+    \theta_{\text{max}} =
+    \mathop{\mathrm{arg\,max}}\limits_{\theta}
+    \sum_m \log p(u_m, v_m; \theta)
     \text{,}
 ```
 
-where $\theta$ are model parameters, we can find our labels and weights $w_i$,
+where $\theta$ are model parameters; we can find our labels and weights $w_i$,
 $w_{ij}$. Note that to get the data the [Tawfik et al. 2022](#1) paper was
-retrieving, we can stop here. From the weights we can find porosity and
+retrieving, we can stop here. From the weights, we can find porosity and
 scCO<sub>2</sub> saturation, and we don't need segmentation.
 
 ## DRP-395 results
 
 [Tawfik et al. 2022](#1) measured two datasets of the same sample: LQ, which was
-intentionally noisy and low quality, and HQ, which had twice lower amplitude of
+intentionally noisy and low quality, and HQ, which had twice the lower amplitude of
 noise. Below are the results of fitting the BIMM model on both the low and high
 quality datasets.
 
@@ -276,4 +276,3 @@ https://doi.org/10.1137/110856733.
 physical model for microstructural characterization and segmentation of 3D
 tomography data,” _Materials Characterization_, 171, 110796, available:
 https://doi.org/10.1016/j.matchar.2020.110796.
-
