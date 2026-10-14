@@ -1,4 +1,12 @@
-# How to segment 𝜇-CT scans
+# Micro-CT Scan Segmentation
+
+<p align="center">
+    <img src="docs/DRP-395-HQ (3.386e-2, 4.086e-2, 5.269e-2).png"
+         alt="3D segmentation of a micro-CT scan"
+         width="800">
+    <br>
+    <em>scCO<sub>2</sub> phase from the DRP-395 HQ micro-CT scan.</em>
+</p>
 
 This repository is a draft of a framework for segmenting 𝜇-CT scans. The
 science of computational imaging has made a great deal of progress in the past
